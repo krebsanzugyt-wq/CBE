@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Gym App",
+    "slug": "gym-app",
+    "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "assetBundlePatterns": ["**/*"]
+  }
+}
