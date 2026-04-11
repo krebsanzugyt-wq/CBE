@@ -648,6 +648,34 @@ function PulsePressable({ children, onPress, style }) {
   return (<Pressable onPress={doPress}><Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View></Pressable>);
 }
 
+// Shared wrapper for all app modals. Renders Modal + SafeAreaView + header
+// (title + close button). If `avoidKeyboard` is true, wraps the body in a
+// KeyboardAvoidingView so inputs stay visible when the keyboard opens.
+function BaseModal({ visible, onClose, title, closeLabel = "Close", avoidKeyboard = false, children }) {
+  const body = (
+    <>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>{title}</Text>
+        <PillButton label={closeLabel} onPress={onClose} variant="secondary" />
+      </View>
+      {children}
+    </>
+  );
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalRoot}>
+        {avoidKeyboard ? (
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+            {body}
+          </KeyboardAvoidingView>
+        ) : (
+          body
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function CreateExerciseModal({ visible, onClose, t, onSave }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Machine");
@@ -655,19 +683,14 @@ function CreateExerciseModal({ visible, onClose, t, onSave }) {
   useEffect(() => { if (visible) { setName(""); setCategory("Machine"); setMuscle("Legs"); } }, [visible]);
   function save() { const n = name.trim(); if (!n) return; onSave({ id: `cx_${uid()}`, name: n, category, muscle, source: "custom" }); onClose(); }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.addCustom}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-            <GlassCard title={t.library.name}><TextInput value={name} onChangeText={setName} placeholder="z.B. Hack Squat" placeholderTextColor="#8B8B93" style={styles.input} /></GlassCard>
-            <GlassCard title={t.library.category}><View style={styles.rowWrap}>{CATEGORIES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={category === x} onPress={() => setCategory(x)} />))}</View></GlassCard>
-            <GlassCard title={t.library.muscle}><View style={styles.rowWrap}>{MUSCLES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={muscle === x} onPress={() => setMuscle(x)} />))}</View></GlassCard>
-            <View style={styles.rowWrap}><PillButton label={t.library.save} onPress={save} variant="primary" /></View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.addCustom} closeLabel={t.today.close} avoidKeyboard>
+      <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <GlassCard title={t.library.name}><TextInput value={name} onChangeText={setName} placeholder="z.B. Hack Squat" placeholderTextColor="#8B8B93" style={styles.input} /></GlassCard>
+        <GlassCard title={t.library.category}><View style={styles.rowWrap}>{CATEGORIES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={category === x} onPress={() => setCategory(x)} />))}</View></GlassCard>
+        <GlassCard title={t.library.muscle}><View style={styles.rowWrap}>{MUSCLES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={muscle === x} onPress={() => setMuscle(x)} />))}</View></GlassCard>
+        <View style={styles.rowWrap}><PillButton label={t.library.save} onPress={save} variant="primary" /></View>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -694,20 +717,15 @@ function ImportExercisesModal({ visible, onClose, t, onImport }) {
     setMsg(`${t.common.success}: Importiert ${result.added} • Übersprungen ${result.skipped}`);
   }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.importExercises}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-            <GlassCard title="JSON">
-              <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 180 }]} multiline autoCapitalize="none" />
-              <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
-              {msg ? <Text style={styles.help}>{msg}</Text> : null}
-            </GlassCard>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.importExercises} closeLabel={t.today.close} avoidKeyboard>
+      <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <GlassCard title="JSON">
+          <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 180 }]} multiline autoCapitalize="none" />
+          <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
+          {msg ? <Text style={styles.help}>{msg}</Text> : null}
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -715,14 +733,11 @@ function ExportDataModal({ visible, onClose, t, data }) {
   const [text, setText] = useState("");
   useEffect(() => { if (visible) setText(JSON.stringify(data, null, 2)); }, [visible, data]);
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.exportData}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Export JSON"><Text style={styles.help}>Markieren → Kopieren → an Freunde schicken.</Text><TextInput value={text} editable={false} style={[styles.input, { minHeight: 260 }]} multiline /></GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.exportData} closeLabel={t.today.close}>
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Export JSON"><Text style={styles.help}>Markieren → Kopieren → an Freunde schicken.</Text><TextInput value={text} editable={false} style={[styles.input, { minHeight: 260 }]} multiline /></GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -738,20 +753,15 @@ function ImportDataModal({ visible, onClose, t, onImport }) {
     else setMsg(`${t.common.success}: Importiert.`);
   }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.importData}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-            <GlassCard title="Import JSON">
-              <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 240 }]} multiline autoCapitalize="none" />
-              <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
-              {msg ? <Text style={styles.help}>{msg}</Text> : null}
-            </GlassCard>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.importData} closeLabel={t.today.close} avoidKeyboard>
+      <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <GlassCard title="Import JSON">
+          <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 240 }]} multiline autoCapitalize="none" />
+          <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
+          {msg ? <Text style={styles.help}>{msg}</Text> : null}
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -775,38 +785,35 @@ function WorkoutDetailModal({ visible, onClose, t, session, onSaveSession }) {
   }
   const data = draft || session;
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.history.title}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title={t.history.summary}>
-            <Text style={styles.listTitle}>{session.planName}</Text>
-            <Text style={styles.listMeta}>{new Date(session.startedAt).toLocaleString()} • {t.history.duration}: ~{session.durationMin} min</Text>
-            <Text style={[styles.listMeta, { marginTop: 6 }]}>{t.workout.progress}: {session.doneSets}/{session.totalSets}</Text>
-            {session.status === "incomplete" ? <Text style={styles.incompleteBadge}>Incomplete</Text> : null}
-          </GlassCard>
-          <GlassCard title="Übungen">
-            {(data.items || []).map((it) => (
-              <View key={it.itemId} style={styles.planItem}>
-                <Text style={styles.listTitle}>{it.name}</Text>
-                {it.performed.map((s, idx) => (
-                  <View key={`${it.itemId}-${idx}`} style={[styles.detailSetRow, s.done ? styles.detailSetDone : null]}>
-                    <Text style={s.done ? styles.detailSetTextDone : styles.detailSetText}>{idx + 1}. {s.kg || "-"} kg × {s.reps || "-"} reps</Text>
-                    <Text style={s.done ? styles.detailBadgeDone : styles.detailBadge}>{s.done ? t.history.done : ""}</Text>
-                  </View>
-                ))}
-              </View>
-            ))}
-          </GlassCard>
-          {session.status === "incomplete" ? (
-            <View style={styles.rowWrap}>
-              {!editMode ? <PillButton label="Complete later" onPress={() => setEditMode(true)} variant="secondary" /> : null}
-              {editMode ? <PillButton label="Save" onPress={saveLaterEdits} variant="primary" /> : null}
+    <BaseModal visible={visible} onClose={onClose} title={t.history.title} closeLabel={t.today.close}>
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title={t.history.summary}>
+          <Text style={styles.listTitle}>{session.planName}</Text>
+          <Text style={styles.listMeta}>{new Date(session.startedAt).toLocaleString()} • {t.history.duration}: ~{session.durationMin} min</Text>
+          <Text style={[styles.listMeta, { marginTop: 6 }]}>{t.workout.progress}: {session.doneSets}/{session.totalSets}</Text>
+          {session.status === "incomplete" ? <Text style={styles.incompleteBadge}>Incomplete</Text> : null}
+        </GlassCard>
+        <GlassCard title="Übungen">
+          {(data.items || []).map((it) => (
+            <View key={it.itemId} style={styles.planItem}>
+              <Text style={styles.listTitle}>{it.name}</Text>
+              {it.performed.map((s, idx) => (
+                <View key={`${it.itemId}-${idx}`} style={[styles.detailSetRow, s.done ? styles.detailSetDone : null]}>
+                  <Text style={s.done ? styles.detailSetTextDone : styles.detailSetText}>{idx + 1}. {s.kg || "-"} kg × {s.reps || "-"} reps</Text>
+                  <Text style={s.done ? styles.detailBadgeDone : styles.detailBadge}>{s.done ? t.history.done : ""}</Text>
+                </View>
+              ))}
             </View>
-          ) : null}
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+          ))}
+        </GlassCard>
+        {session.status === "incomplete" ? (
+          <View style={styles.rowWrap}>
+            {!editMode ? <PillButton label="Complete later" onPress={() => setEditMode(true)} variant="secondary" /> : null}
+            {editMode ? <PillButton label="Save" onPress={saveLaterEdits} variant="primary" /> : null}
+          </View>
+        ) : null}
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -822,19 +829,16 @@ function ExerciseDetailModal({ visible, onClose, exercise, prefs, setPrefs, onSa
     setTipText("");
   }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Exercise Detail</Text><PillButton label="Close" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title={exercise.name}><Text style={styles.listMeta}>{exercise.category} • {exercise.muscle}</Text></GlassCard>
-          <GlassCard title="Tips">
-            <TextInput value={tipText} onChangeText={setTipText} placeholder="Add a tip..." placeholderTextColor="#8B8B93" style={styles.input} />
-            <View style={styles.rowWrap}><PillButton label="Add tip" onPress={addTip} variant="secondary" /></View>
-            {(tips || []).length === 0 ? <Text style={styles.help}>No tips yet.</Text> : (tips || []).map((x) => <Text key={x.id} style={styles.help}>• {x.text}</Text>)}
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title="Exercise Detail">
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title={exercise.name}><Text style={styles.listMeta}>{exercise.category} • {exercise.muscle}</Text></GlassCard>
+        <GlassCard title="Tips">
+          <TextInput value={tipText} onChangeText={setTipText} placeholder="Add a tip..." placeholderTextColor="#8B8B93" style={styles.input} />
+          <View style={styles.rowWrap}><PillButton label="Add tip" onPress={addTip} variant="secondary" /></View>
+          {(tips || []).length === 0 ? <Text style={styles.help}>No tips yet.</Text> : (tips || []).map((x) => <Text key={x.id} style={styles.help}>• {x.text}</Text>)}
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -842,17 +846,14 @@ function NoteModal({ visible, onClose, title, value, onSave }) {
   const [text, setText] = useState("");
   useEffect(() => { if (visible) setText(value || ""); }, [visible, value]);
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{title || "Note"}</Text><PillButton label="Close" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Note">
-            <TextInput value={text} onChangeText={setText} multiline style={[styles.input, { minHeight: 140 }]} placeholder="Write note..." placeholderTextColor="#8B8B93" />
-            <View style={styles.rowWrap}><PillButton label="Save" onPress={() => { onSave(text); onClose(); }} variant="primary" /></View>
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={title || "Note"}>
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Note">
+          <TextInput value={text} onChangeText={setText} multiline style={[styles.input, { minHeight: 140 }]} placeholder="Write note..." placeholderTextColor="#8B8B93" />
+          <View style={styles.rowWrap}><PillButton label="Save" onPress={() => { onSave(text); onClose(); }} variant="primary" /></View>
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -862,21 +863,18 @@ function EditLogModal({ visible, onClose, log, onSave, onDelete }) {
   useEffect(() => { if (!visible || !log) return; setType(log.type || "Gym"); setNote(log.note || ""); }, [visible, log]);
   if (!log) return null;
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Edit Log</Text><PillButton label="Cancel" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Type"><View style={styles.rowWrap}>{["Gym","Run","Bike","Swim","Other"].map((x) => (<Chip key={x} label={x} active={type === x} onPress={() => setType(x)} />))}</View></GlassCard>
-          <GlassCard title="Note">
-            <GlowTextInput value={note} onChangeText={setNote} multiline style={styles.input} placeholder="Note" placeholderTextColor="#8B8B93" />
-            <View style={styles.rowWrap}>
-              <PillButton label="Save" onPress={() => onSave({ ...log, type, note: note.trim() || undefined })} variant="primary" />
-              <PillButton label="Delete" onPress={() => onDelete(log.id)} variant="secondary" />
-            </View>
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title="Edit Log" closeLabel="Cancel">
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Type"><View style={styles.rowWrap}>{["Gym","Run","Bike","Swim","Other"].map((x) => (<Chip key={x} label={x} active={type === x} onPress={() => setType(x)} />))}</View></GlassCard>
+        <GlassCard title="Note">
+          <GlowTextInput value={note} onChangeText={setNote} multiline style={styles.input} placeholder="Note" placeholderTextColor="#8B8B93" />
+          <View style={styles.rowWrap}>
+            <PillButton label="Save" onPress={() => onSave({ ...log, type, note: note.trim() || undefined })} variant="primary" />
+            <PillButton label="Delete" onPress={() => onDelete(log.id)} variant="secondary" />
+          </View>
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -887,26 +885,23 @@ function EditPlanModal({ visible, onClose, plan, onSave, onDelete, onDuplicate }
   useEffect(() => { if (!visible || !plan) return; setName(plan.name || ""); setRest(String(plan.restDefaultSeconds || 180)); setConfirmDelete(false); }, [visible, plan]);
   if (!plan) return null;
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Edit Plan</Text><PillButton label="Cancel" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Plan Meta">
-            <Text style={styles.label}>Name</Text>
-            <GlowTextInput value={name} onChangeText={setName} style={styles.input} placeholder="Plan Name" placeholderTextColor="#8B8B93" />
-            <Text style={styles.label}>Rest default (sec)</Text>
-            <GlowTextInput value={rest} onChangeText={(v) => setRest(v.replace(/[^\d]/g, ""))} keyboardType="number-pad" style={styles.input} placeholder="180" placeholderTextColor="#8B8B93" />
-            <View style={styles.rowWrap}>
-              <PillButton label="Save" onPress={() => onSave({ ...plan, name: name.trim() || plan.name, restDefaultSeconds: Number(rest || 0) || 0 })} variant="primary" />
-              <PillButton label="Duplicate" onPress={() => onDuplicate(plan)} variant="secondary" />
-            </View>
-            <View style={styles.rowWrap}>
-              {!confirmDelete ? <PillButton label="Delete Plan" onPress={() => setConfirmDelete(true)} variant="secondary" /> : <PillButton label="Confirm Delete" onPress={() => onDelete(plan.id)} variant="secondary" />}
-            </View>
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title="Edit Plan" closeLabel="Cancel">
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Plan Meta">
+          <Text style={styles.label}>Name</Text>
+          <GlowTextInput value={name} onChangeText={setName} style={styles.input} placeholder="Plan Name" placeholderTextColor="#8B8B93" />
+          <Text style={styles.label}>Rest default (sec)</Text>
+          <GlowTextInput value={rest} onChangeText={(v) => setRest(v.replace(/[^\d]/g, ""))} keyboardType="number-pad" style={styles.input} placeholder="180" placeholderTextColor="#8B8B93" />
+          <View style={styles.rowWrap}>
+            <PillButton label="Save" onPress={() => onSave({ ...plan, name: name.trim() || plan.name, restDefaultSeconds: Number(rest || 0) || 0 })} variant="primary" />
+            <PillButton label="Duplicate" onPress={() => onDuplicate(plan)} variant="secondary" />
+          </View>
+          <View style={styles.rowWrap}>
+            {!confirmDelete ? <PillButton label="Delete Plan" onPress={() => setConfirmDelete(true)} variant="secondary" /> : <PillButton label="Confirm Delete" onPress={() => onDelete(plan.id)} variant="secondary" />}
+          </View>
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -1070,12 +1065,9 @@ function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStar
           </View>
         ))}
       </GlassCard>
-      <Modal visible={libraryOpen} animationType="slide" onRequestClose={() => setLibraryOpen(false)}>
-        <SafeAreaView style={styles.modalRoot}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.title}</Text><PillButton label={t.library.close} onPress={() => setLibraryOpen(false)} variant="secondary" /></View>
-          <LibraryPickerList t={t} allExercises={allExercises} onPick={(ex) => { addExerciseToPlan(activePlan, ex); setLibraryOpen(false); }} />
-        </SafeAreaView>
-      </Modal>
+      <BaseModal visible={libraryOpen} onClose={() => setLibraryOpen(false)} title={t.library.title} closeLabel={t.library.close}>
+        <LibraryPickerList t={t} allExercises={allExercises} onPick={(ex) => { addExerciseToPlan(activePlan, ex); setLibraryOpen(false); }} />
+      </BaseModal>
       <EditPlanModal visible={editPlanOpen} onClose={() => setEditPlanOpen(false)} plan={activePlan} onSave={savePlanMeta} onDelete={deletePlan} onDuplicate={duplicatePlan} />
     </ScrollView>
   );
@@ -1325,26 +1317,23 @@ function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calenda
           </GlassCard>
         );
       })}
-      <Modal visible={entryModalOpen} animationType="slide" onRequestClose={() => setEntryModalOpen(false)}>
-        <SafeAreaView style={styles.modalRoot}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{editingEntryId ? "Edit Entry" : "New Entry"}</Text><PillButton label={t.today.close} onPress={() => setEntryModalOpen(false)} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad}>
-            <GlassCard title="Entry">
-              <Text style={styles.label}>Date (YYYY-MM-DD)</Text><TextInput value={entryDate} onChangeText={setEntryDate} style={styles.input} placeholder="2026-01-01" placeholderTextColor="#8B8B93" autoCapitalize="none" />
-              <Text style={styles.label}>Title</Text><TextInput value={entryTitle} onChangeText={setEntryTitle} style={styles.input} placeholder="Run Zone 2" placeholderTextColor="#8B8B93" />
-              <Text style={styles.label}>Sport</Text>
-              <View style={styles.rowWrap}>{SPORT_TYPES.map((x) => (<Chip key={x} label={x} active={entrySportType === x} onPress={() => setEntrySportType(x)} />))}</View>
-              <View style={styles.setRow}>
-                <View style={{ flex: 1, marginRight: 10 }}><Text style={styles.label}>Start (HH:MM)</Text><TextInput value={entryTime} onChangeText={setEntryTime} style={styles.inputSmall} placeholder="07:00" placeholderTextColor="#8B8B93" autoCapitalize="none" /></View>
-                <View style={{ flex: 1 }}><Text style={styles.label}>Duration (min)</Text><TextInput value={entryDuration} onChangeText={(v) => setEntryDuration(v.replace(/[^\d]/g, ""))} style={styles.inputSmall} placeholder="45" placeholderTextColor="#8B8B93" keyboardType="number-pad" /></View>
-              </View>
-              <Text style={styles.label}>Status</Text>
-              <View style={styles.rowWrap}>{["planned","done","skipped"].map((st) => (<Chip key={st} label={st} active={entryStatus === st} onPress={() => setEntryStatus(st)} />))}</View>
-              <View style={styles.rowWrap}><PillButton label="Save" onPress={saveEntry} variant="primary" /></View>
-            </GlassCard>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      <BaseModal visible={entryModalOpen} onClose={() => setEntryModalOpen(false)} title={editingEntryId ? "Edit Entry" : "New Entry"} closeLabel={t.today.close}>
+        <ScrollView contentContainerStyle={styles.screenPad}>
+          <GlassCard title="Entry">
+            <Text style={styles.label}>Date (YYYY-MM-DD)</Text><TextInput value={entryDate} onChangeText={setEntryDate} style={styles.input} placeholder="2026-01-01" placeholderTextColor="#8B8B93" autoCapitalize="none" />
+            <Text style={styles.label}>Title</Text><TextInput value={entryTitle} onChangeText={setEntryTitle} style={styles.input} placeholder="Run Zone 2" placeholderTextColor="#8B8B93" />
+            <Text style={styles.label}>Sport</Text>
+            <View style={styles.rowWrap}>{SPORT_TYPES.map((x) => (<Chip key={x} label={x} active={entrySportType === x} onPress={() => setEntrySportType(x)} />))}</View>
+            <View style={styles.setRow}>
+              <View style={{ flex: 1, marginRight: 10 }}><Text style={styles.label}>Start (HH:MM)</Text><TextInput value={entryTime} onChangeText={setEntryTime} style={styles.inputSmall} placeholder="07:00" placeholderTextColor="#8B8B93" autoCapitalize="none" /></View>
+              <View style={{ flex: 1 }}><Text style={styles.label}>Duration (min)</Text><TextInput value={entryDuration} onChangeText={(v) => setEntryDuration(v.replace(/[^\d]/g, ""))} style={styles.inputSmall} placeholder="45" placeholderTextColor="#8B8B93" keyboardType="number-pad" /></View>
+            </View>
+            <Text style={styles.label}>Status</Text>
+            <View style={styles.rowWrap}>{["planned","done","skipped"].map((st) => (<Chip key={st} label={st} active={entryStatus === st} onPress={() => setEntryStatus(st)} />))}</View>
+            <View style={styles.rowWrap}><PillButton label="Save" onPress={saveEntry} variant="primary" /></View>
+          </GlassCard>
+        </ScrollView>
+      </BaseModal>
     </ScrollView>
   );
 }
