@@ -11,7 +11,6 @@ import {
   Platform,
   StyleSheet,
   ActivityIndicator,
-  FlatList,
   Animated,
   Easing,
 } from "react-native";
@@ -923,9 +922,11 @@ function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, 
         </View>
       </GlassCard>
       <GlassCard title={t.today.workouts}>
-        <FlatList data={sessions.slice(0, 8)} keyExtractor={(item) => item.id} scrollEnabled={false} initialNumToRender={6} ListEmptyComponent={<ListEmpty text={t.today.workoutsEmpty} />}
-          renderItem={({ item: s }) => (
-            <View style={styles.listItemRow}>
+        {sessions.length === 0 ? (
+          <ListEmpty text={t.today.workoutsEmpty} />
+        ) : (
+          sessions.slice(0, 8).map((s) => (
+            <View key={s.id} style={styles.listItemRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.listTitle}>{s.planName}</Text>
                 <Text style={styles.listMeta}>{new Date(s.startedAt).toLocaleString()} • {s.doneSets}/{s.totalSets} Sets • ~{s.durationMin} min</Text>
@@ -933,19 +934,21 @@ function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, 
               </View>
               <RowButton label={t.today.open} onPress={() => onOpenSession(s)} variant="secondary" />
             </View>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
       <GlassCard title={t.today.recent}>
-        <FlatList data={logs.slice(0, 10)} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<ListEmpty text={t.today.empty} />}
-          renderItem={({ item: l }) => (
-            <Pressable style={styles.listItem} onPress={() => onOpenLog(l)}>
+        {logs.length === 0 ? (
+          <ListEmpty text={t.today.empty} />
+        ) : (
+          logs.slice(0, 10).map((l) => (
+            <Pressable key={l.id} style={styles.listItem} onPress={() => onOpenLog(l)}>
               <Text style={styles.listTitle}>{l.type}</Text>
               <Text style={styles.listMeta}>{new Date(l.createdAt).toLocaleString()}</Text>
               {l.note ? <Text style={styles.listBody}>{l.note}</Text> : null}
             </Pressable>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
     </ScrollView>
   );
@@ -967,14 +970,16 @@ function LibraryPickerList({ t, allExercises, onPick }) {
         <View style={styles.rowWrap}>{MUSCLES.map((x) => (<Chip key={x} label={x} active={mus === x} onPress={() => setMus(x)} />))}</View>
       </GlassCard>
       <GlassCard title="Ergebnisse">
-        <FlatList data={filtered} keyExtractor={(item) => item.id} scrollEnabled={false} initialNumToRender={12} ListEmptyComponent={<ListEmpty text={t.library.noResults} />}
-          renderItem={({ item: e }) => (
-            <View style={styles.listItemRow}>
+        {filtered.length === 0 ? (
+          <ListEmpty text={t.library.noResults} />
+        ) : (
+          filtered.map((e) => (
+            <View key={e.id} style={styles.listItemRow}>
               <View style={{ flex: 1 }}><Text style={styles.listTitle}>{e.name}</Text><Text style={styles.listMeta}>{e.category} • {e.muscle}</Text></View>
               <RowButton label={t.library.addToPlan} onPress={() => onPick(e)} variant="secondary" />
             </View>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
     </ScrollView>
   );
@@ -1007,14 +1012,16 @@ function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStar
           <View style={styles.rowWrap}><PillButton label={t.plans.create} onPress={createPlan} variant="primary" /></View>
         </GlassCard>
         <GlassCard title="Deine Pläne">
-          <FlatList data={plans} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<ListEmpty text="No plans yet." />}
-            renderItem={({ item: p }) => (
-              <View style={styles.listItemRow}>
+          {plans.length === 0 ? (
+            <ListEmpty text="No plans yet." />
+          ) : (
+            plans.map((p) => (
+              <View key={p.id} style={styles.listItemRow}>
                 <View style={{ flex: 1 }}><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listMeta}>Rest: {p.restDefaultSeconds}s • Übungen: {p.items.length}</Text></View>
                 <RowButton label={t.plans.open} onPress={() => setActivePlanId(p.id)} variant="secondary" />
               </View>
-            )}
-          />
+            ))
+          )}
         </GlassCard>
       </ScrollView>
     );
@@ -1171,25 +1178,29 @@ function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, o
         <View style={styles.rowWrap}>{MUSCLES.map((x) => (<Chip key={x} label={x} active={mus === x} onPress={() => setMus(x)} />))}</View>
       </GlassCard>
       <GlassCard title="Ergebnisse">
-        <FlatList data={filtered} keyExtractor={(item) => item.id} scrollEnabled={false} initialNumToRender={12} ListEmptyComponent={<ListEmpty text={t.library.noResults} />}
-          renderItem={({ item: e }) => (
-            <Pressable style={styles.listItem} onPress={() => onOpenExerciseDetail(e)}>
+        {filtered.length === 0 ? (
+          <ListEmpty text={t.library.noResults} />
+        ) : (
+          filtered.map((e) => (
+            <Pressable key={e.id} style={styles.listItem} onPress={() => onOpenExerciseDetail(e)}>
               <Text style={styles.listTitle}>{e.name}</Text>
               <Text style={styles.listMeta}>{e.category} • {e.muscle}</Text>
             </Pressable>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
       <GlassCard title={t.library.customTitle}>
         <View style={styles.rowWrap}><PillButton label={t.library.addCustom} onPress={onOpenCreate} variant="primary" /></View>
-        <FlatList data={userExercises.slice(0, 30)} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<ListEmpty text={t.library.emptyCustom} />}
-          renderItem={({ item: e }) => (
-            <View style={styles.listItemRow}>
+        {userExercises.length === 0 ? (
+          <ListEmpty text={t.library.emptyCustom} />
+        ) : (
+          userExercises.slice(0, 30).map((e) => (
+            <View key={e.id} style={styles.listItemRow}>
               <View style={{ flex: 1 }}><Text style={styles.listTitle}>{e.name}</Text><Text style={styles.listMeta}>{e.category} • {e.muscle}</Text></View>
               <RowButton label={t.library.delete} onPress={() => onDeleteUserExercise(e.id)} variant="secondary" />
             </View>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
       <GlassCard title={t.library.dataTitle}>
         <View style={styles.rowWrap}>
@@ -1230,9 +1241,16 @@ function ProgressScreen({ sessions, logs, calendarEntries, allExercises, prefs, 
         </View>
       </GlassCard>
       <GlassCard title="Recent Workouts">
-        <FlatList data={sessions.slice(0, 20)} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<Text style={styles.muted}>No sessions yet.</Text>}
-          renderItem={({ item: s }) => (<View style={styles.listItem}><Text style={styles.listTitle}>{s.planName}</Text><Text style={styles.listMeta}>{new Date(s.startedAt).toLocaleString()} • {s.doneSets}/{s.totalSets} sets</Text></View>)}
-        />
+        {sessions.length === 0 ? (
+          <Text style={styles.muted}>No sessions yet.</Text>
+        ) : (
+          sessions.slice(0, 20).map((s) => (
+            <View key={s.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{s.planName}</Text>
+              <Text style={styles.listMeta}>{new Date(s.startedAt).toLocaleString()} • {s.doneSets}/{s.totalSets} sets</Text>
+            </View>
+          ))
+        )}
       </GlassCard>
     </ScrollView>
   );
@@ -1281,11 +1299,11 @@ function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calenda
           </View>
         </View>
       </GlassCard>
-      <FlatList data={weekDays} keyExtractor={(d) => formatDateKey(d)} scrollEnabled={false} renderItem={({ item: d }) => {
+      {weekDays.map((d) => {
         const dateKey = formatDateKey(d);
         const entries = entriesForDate(dateKey);
         return (
-          <GlassCard title={`${weekdayLabel[weekdayMonday1to7(d) - 1]} • ${dateKey}`}>
+          <GlassCard key={dateKey} title={`${weekdayLabel[weekdayMonday1to7(d) - 1]} • ${dateKey}`}>
             <View style={styles.rowWrap}><RowButton label="+ Add" onPress={() => openNewEntry(d)} variant="secondary" /></View>
             {entries.length === 0 ? <ListEmpty text={t.calendar.empty} /> : entries.map((e) => (
               <View key={e.id} style={styles.planItem}>
@@ -1299,7 +1317,7 @@ function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calenda
             ))}
           </GlassCard>
         );
-      }} />
+      })}
       <Modal visible={entryModalOpen} animationType="slide" onRequestClose={() => setEntryModalOpen(false)}>
         <SafeAreaView style={styles.modalRoot}>
           <View style={styles.modalHeader}><Text style={styles.modalTitle}>{editingEntryId ? "Edit Entry" : "New Entry"}</Text><PillButton label={t.today.close} onPress={() => setEntryModalOpen(false)} variant="secondary" /></View>
