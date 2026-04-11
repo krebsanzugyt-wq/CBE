@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -127,6 +127,19 @@ const DS = {
     small: { fontSize: 12, fontWeight: "600" },
   },
 };
+
+// App-wide context for cross-cutting concerns that were previously prop-drilled:
+// - `t`: i18n string bundle (used by almost every screen/modal)
+// - `prefs` / `setPrefs`: user preferences (read by ExerciseDetailModal)
+// - `showToast`: transient notifications (currently only called from the root, but
+//    exposed here so any component can surface errors without new prop chains)
+// Consumers call `useApp()` instead of pulling these off their props.
+const AppCtx = createContext(null);
+function useApp() {
+  const ctx = useContext(AppCtx);
+  if (!ctx) throw new Error("useApp() called outside <AppCtx.Provider>");
+  return ctx;
+}
 
 function useDebouncedValue(value, delay = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -676,7 +689,8 @@ function BaseModal({ visible, onClose, title, closeLabel = "Close", avoidKeyboar
   );
 }
 
-function CreateExerciseModal({ visible, onClose, t, onSave }) {
+function CreateExerciseModal({ visible, onClose, onSave }) {
+  const { t } = useApp();
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Machine");
   const [muscle, setMuscle] = useState("Legs");
@@ -694,7 +708,8 @@ function CreateExerciseModal({ visible, onClose, t, onSave }) {
   );
 }
 
-function ImportExercisesModal({ visible, onClose, t, onImport }) {
+function ImportExercisesModal({ visible, onClose, onImport }) {
+  const { t } = useApp();
   const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
   useEffect(() => { if (visible) { setText(""); setMsg(""); } }, [visible]);
@@ -729,7 +744,8 @@ function ImportExercisesModal({ visible, onClose, t, onImport }) {
   );
 }
 
-function ExportDataModal({ visible, onClose, t, data }) {
+function ExportDataModal({ visible, onClose, data }) {
+  const { t } = useApp();
   const [text, setText] = useState("");
   useEffect(() => { if (visible) setText(JSON.stringify(data, null, 2)); }, [visible, data]);
   return (
@@ -741,7 +757,8 @@ function ExportDataModal({ visible, onClose, t, data }) {
   );
 }
 
-function ImportDataModal({ visible, onClose, t, onImport }) {
+function ImportDataModal({ visible, onClose, onImport }) {
+  const { t } = useApp();
   const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
   useEffect(() => { if (visible) { setText(""); setMsg(""); } }, [visible]);
@@ -765,7 +782,8 @@ function ImportDataModal({ visible, onClose, t, onImport }) {
   );
 }
 
-function WorkoutDetailModal({ visible, onClose, t, session, onSaveSession }) {
+function WorkoutDetailModal({ visible, onClose, session, onSaveSession }) {
+  const { t } = useApp();
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState(null);
   useEffect(() => { if (!visible || !session) return; setEditMode(false); setDraft(normalizeGymSession(session)); }, [visible, session]);
@@ -817,7 +835,8 @@ function WorkoutDetailModal({ visible, onClose, t, session, onSaveSession }) {
   );
 }
 
-function ExerciseDetailModal({ visible, onClose, exercise, prefs, setPrefs, onSaveExerciseDefaults }) {
+function ExerciseDetailModal({ visible, onClose, exercise, onSaveExerciseDefaults }) {
+  const { prefs, setPrefs } = useApp();
   const [tipText, setTipText] = useState("");
   if (!exercise) return null;
   const tipsByExercise = prefs?.localTipsByExercise || {};
@@ -905,7 +924,8 @@ function EditPlanModal({ visible, onClose, plan, onSave, onDelete, onDuplicate }
   );
 }
 
-function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, todayAgenda, onDoneAgenda, onStartAgendaGym, onStartAgendaEndurance, onMoveAgendaTomorrow, onCopyAgendaNextWeek, onOpenLog }) {
+function TodayScreen({ note, setNote, logs, addLog, sessions, onOpenSession, todayAgenda, onDoneAgenda, onStartAgendaGym, onStartAgendaEndurance, onMoveAgendaTomorrow, onCopyAgendaNextWeek, onOpenLog }) {
+  const { t } = useApp();
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <Text style={styles.h1}>{t.today.title}</Text>
@@ -964,7 +984,8 @@ function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, 
   );
 }
 
-function LibraryPickerList({ t, allExercises, onPick }) {
+function LibraryPickerList({ allExercises, onPick }) {
+  const { t } = useApp();
   const { q, setQ, cat, setCat, mus, setMus, results: filtered } = useExerciseFilter(allExercises, 120);
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
@@ -991,7 +1012,8 @@ function LibraryPickerList({ t, allExercises, onPick }) {
   );
 }
 
-function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStartWorkout, allExercises }) {
+function PlansScreen({ plans, setPlans, activePlanId, setActivePlanId, onStartWorkout, allExercises }) {
+  const { t } = useApp();
   const [newPlanName, setNewPlanName] = useState("");
   const [editPlanOpen, setEditPlanOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -1066,14 +1088,15 @@ function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStar
         ))}
       </GlassCard>
       <BaseModal visible={libraryOpen} onClose={() => setLibraryOpen(false)} title={t.library.title} closeLabel={t.library.close}>
-        <LibraryPickerList t={t} allExercises={allExercises} onPick={(ex) => { addExerciseToPlan(activePlan, ex); setLibraryOpen(false); }} />
+        <LibraryPickerList allExercises={allExercises} onPick={(ex) => { addExerciseToPlan(activePlan, ex); setLibraryOpen(false); }} />
       </BaseModal>
       <EditPlanModal visible={editPlanOpen} onClose={() => setEditPlanOpen(false)} plan={activePlan} onSave={savePlanMeta} onDelete={deletePlan} onDuplicate={duplicatePlan} />
     </ScrollView>
   );
 }
 
-function WorkoutScreen({ t, plan, workout, setWorkout, onFinish, allExercises, onOpenExerciseDetail }) {
+function WorkoutScreen({ plan, workout, setWorkout, onFinish, allExercises, onOpenExerciseDetail }) {
+  const { t } = useApp();
   const restIntervalRef = useRef(null);
   const [exerciseNoteModal, setExerciseNoteModal] = useState({ open: false, itemId: null });
   const [setNoteModal, setSetNoteModal] = useState({ open: false, itemId: null, setIdx: -1 });
@@ -1164,7 +1187,8 @@ function WorkoutScreen({ t, plan, workout, setWorkout, onFinish, allExercises, o
   );
 }
 
-function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, onOpenCreate, onOpenImportExercises, onOpenExport, onOpenImportData, packInstalling, packStatusText, onInstallPack, prefs, setPrefs, onOpenExerciseDetail }) {
+function LibraryScreen({ allExercises, userExercises, onDeleteUserExercise, onOpenCreate, onOpenImportExercises, onOpenExport, onOpenImportData, packInstalling, packStatusText, onInstallPack, onOpenExerciseDetail }) {
+  const { t } = useApp();
   const { q, setQ, cat, setCat, mus, setMus, results: filtered } = useExerciseFilter(allExercises, 60);
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
@@ -1217,7 +1241,7 @@ function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, o
   );
 }
 
-function ProgressScreen({ sessions, logs, calendarEntries, allExercises, prefs, setPrefs }) {
+function ProgressScreen({ sessions, logs, calendarEntries, allExercises }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const weekStart = addDays(startOfWeekMonday(new Date()), weekOffset * 7);
   const weekDays = Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i));
@@ -1255,7 +1279,8 @@ function ProgressScreen({ sessions, logs, calendarEntries, allExercises, prefs, 
   );
 }
 
-function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calendarTemplates, setCalendarTemplates, calendarWeekOffset, setCalendarWeekOffset, onApplyTemplatesToWeek }) {
+function CalendarScreen({ plans, calendarEntries, setCalendarEntries, calendarTemplates, setCalendarTemplates, calendarWeekOffset, setCalendarWeekOffset, onApplyTemplatesToWeek }) {
+  const { t } = useApp();
   const [entryModalOpen, setEntryModalOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [entryDate, setEntryDate] = useState("");
@@ -1558,40 +1583,53 @@ export default function App() {
     setCalendarEntries((prev) => { const next = [...prev]; const now = Date.now(); for (const tpl of calendarTemplates) { if (!tpl?.active) continue; const wd = Math.min(7, Math.max(1, Number(tpl.weekday) || 1)); const date = formatDateKey(addDays(start, wd - 1)); const existingIdx = next.findIndex((e) => e.date === date && e.templateId === tpl.id); const mapped = { id: existingIdx >= 0 ? next[existingIdx].id : uid(), date, startTime: tpl.startTime || "07:00", durationMin: Math.max(1, parseInt(String(tpl.durationMin || 45), 10) || 45), title: tpl.title || "Template", sportType: tpl.sportType || "Other", planId: tpl.sportType === "Gym" ? tpl.planId || null : null, status: existingIdx >= 0 ? next[existingIdx].status : "planned", templateId: tpl.id, createdAt: existingIdx >= 0 ? next[existingIdx].createdAt : now, updatedAt: now }; if (existingIdx >= 0) next[existingIdx] = { ...next[existingIdx], ...mapped }; else next.unshift(mapped); } return next; });
   }
 
+  // AppCtx value is memoised so consumers that only depend on e.g. `t` don't
+  // re-render when unrelated state changes. `t` is the STR bundle (constant),
+  // `prefs` and `setPrefs` round out the values that were previously prop-drilled.
+  const appCtxValue = useMemo(() => ({ t, prefs, setPrefs, showToast }), [t, prefs]);
+
   if (workout) {
     const plan = plans.find((p) => p.id === workout.planId);
     if (!plan) return null;
-    return (<SafeAreaView style={styles.root}><WorkoutScreen t={t} plan={plan} workout={workout} setWorkout={setWorkout} onFinish={finishWorkout} allExercises={allExercises} onOpenExerciseDetail={openExerciseDetail} /></SafeAreaView>);
+    return (
+      <AppCtx.Provider value={appCtxValue}>
+        <SafeAreaView style={styles.root}>
+          <WorkoutScreen plan={plan} workout={workout} setWorkout={setWorkout} onFinish={finishWorkout} allExercises={allExercises} onOpenExerciseDetail={openExerciseDetail} />
+        </SafeAreaView>
+      </AppCtx.Provider>
+    );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      {tab === "today" ? <TodayScreen t={t} note={note} setNote={setNote} logs={logs} addLog={addLog} sessions={sessions} onOpenSession={openSession} todayAgenda={todayAgenda} onDoneAgenda={markAgendaDone} onStartAgendaGym={startAgendaGym} onStartAgendaEndurance={() => {}} onMoveAgendaTomorrow={moveAgendaToTomorrow} onCopyAgendaNextWeek={copyAgendaToNextWeek} onOpenLog={openLog} /> : null}
-      {tab === "plans" ? <PlansScreen t={t} plans={plans} setPlans={setPlans} activePlanId={activePlanId} setActivePlanId={setActivePlanId} onStartWorkout={onStartWorkout} allExercises={allExercises} /> : null}
-      {tab === "library" ? <LibraryScreen t={t} allExercises={allExercises} userExercises={userExercises} onDeleteUserExercise={deleteUserExercise} onOpenCreate={() => setCreateExerciseOpen(true)} onOpenImportExercises={() => setImportExercisesOpen(true)} onOpenExport={() => setExportOpen(true)} onOpenImportData={() => setImportDataOpen(true)} packInstalling={packInstalling} packStatusText={packStatusText} onInstallPack={installFreeExerciseDbPack} prefs={prefs} setPrefs={setPrefs} onOpenExerciseDetail={openExerciseDetail} /> : null}
-      {tab === "progress" ? <ProgressScreen sessions={sessions} logs={logs} calendarEntries={calendarEntries} allExercises={allExercises} prefs={prefs} setPrefs={setPrefs} /> : null}
-      {tab === "endurance" ? <EnduranceScreen templates={enduranceTemplates} sessions={enduranceSessions} plans={plans} onSaveTemplate={(t) => setEnduranceTemplates((prev) => { const i = prev.findIndex((x) => x.id === t.id); if (i >= 0) { const n = [...prev]; n[i] = t; return n; } return [t, ...prev]; })} onDeleteTemplate={(id) => setEnduranceTemplates((prev) => prev.filter((x) => x.id !== id))} onStartTemplate={() => {}} onScheduleTemplate={() => {}} onOpenSession={() => {}} /> : null}
-      {tab === "calendar" ? <CalendarScreen t={t} plans={plans} calendarEntries={calendarEntries} setCalendarEntries={setCalendarEntries} calendarTemplates={calendarTemplates} setCalendarTemplates={setCalendarTemplates} calendarWeekOffset={calendarWeekOffset} setCalendarWeekOffset={setCalendarWeekOffset} onApplyTemplatesToWeek={applyTemplatesToWeek} /> : null}
+    <AppCtx.Provider value={appCtxValue}>
+      <SafeAreaView style={styles.root}>
+        {tab === "today" ? <TodayScreen note={note} setNote={setNote} logs={logs} addLog={addLog} sessions={sessions} onOpenSession={openSession} todayAgenda={todayAgenda} onDoneAgenda={markAgendaDone} onStartAgendaGym={startAgendaGym} onStartAgendaEndurance={() => {}} onMoveAgendaTomorrow={moveAgendaToTomorrow} onCopyAgendaNextWeek={copyAgendaToNextWeek} onOpenLog={openLog} /> : null}
+        {tab === "plans" ? <PlansScreen plans={plans} setPlans={setPlans} activePlanId={activePlanId} setActivePlanId={setActivePlanId} onStartWorkout={onStartWorkout} allExercises={allExercises} /> : null}
+        {tab === "library" ? <LibraryScreen allExercises={allExercises} userExercises={userExercises} onDeleteUserExercise={deleteUserExercise} onOpenCreate={() => setCreateExerciseOpen(true)} onOpenImportExercises={() => setImportExercisesOpen(true)} onOpenExport={() => setExportOpen(true)} onOpenImportData={() => setImportDataOpen(true)} packInstalling={packInstalling} packStatusText={packStatusText} onInstallPack={installFreeExerciseDbPack} onOpenExerciseDetail={openExerciseDetail} /> : null}
+        {tab === "progress" ? <ProgressScreen sessions={sessions} logs={logs} calendarEntries={calendarEntries} allExercises={allExercises} /> : null}
+        {tab === "endurance" ? <EnduranceScreen templates={enduranceTemplates} sessions={enduranceSessions} plans={plans} onSaveTemplate={(tpl) => setEnduranceTemplates((prev) => { const i = prev.findIndex((x) => x.id === tpl.id); if (i >= 0) { const n = [...prev]; n[i] = tpl; return n; } return [tpl, ...prev]; })} onDeleteTemplate={(id) => setEnduranceTemplates((prev) => prev.filter((x) => x.id !== id))} onStartTemplate={() => {}} onScheduleTemplate={() => {}} onOpenSession={() => {}} /> : null}
+        {tab === "calendar" ? <CalendarScreen plans={plans} calendarEntries={calendarEntries} setCalendarEntries={setCalendarEntries} calendarTemplates={calendarTemplates} setCalendarTemplates={setCalendarTemplates} calendarWeekOffset={calendarWeekOffset} setCalendarWeekOffset={setCalendarWeekOffset} onApplyTemplatesToWeek={applyTemplatesToWeek} /> : null}
 
-      <View style={[styles.tabBar, { bottom: TAB_BOTTOM + 8 }]}>
-        <TabButton label={t.tabs.today} active={tab === "today"} onPress={() => setTab("today")} />
-        <TabButton label={t.tabs.plans} active={tab === "plans"} onPress={() => setTab("plans")} />
-        <TabButton label={t.tabs.library} active={tab === "library"} onPress={() => setTab("library")} />
-        <TabButton label={t.tabs.progress} active={tab === "progress"} onPress={() => setTab("progress")} />
-        <TabButton label={t.tabs.endurance} active={tab === "endurance"} onPress={() => setTab("endurance")} />
-        <TabButton label={t.tabs.calendar} active={tab === "calendar"} onPress={() => setTab("calendar")} />
-      </View>
+        <View style={[styles.tabBar, { bottom: TAB_BOTTOM + 8 }]}>
+          <TabButton label={t.tabs.today} active={tab === "today"} onPress={() => setTab("today")} />
+          <TabButton label={t.tabs.plans} active={tab === "plans"} onPress={() => setTab("plans")} />
+          <TabButton label={t.tabs.library} active={tab === "library"} onPress={() => setTab("library")} />
+          <TabButton label={t.tabs.progress} active={tab === "progress"} onPress={() => setTab("progress")} />
+          <TabButton label={t.tabs.endurance} active={tab === "endurance"} onPress={() => setTab("endurance")} />
+          <TabButton label={t.tabs.calendar} active={tab === "calendar"} onPress={() => setTab("calendar")} />
+        </View>
 
-      <WorkoutDetailModal visible={sessionModalOpen} onClose={() => setSessionModalOpen(false)} t={t} session={selectedSession} onSaveSession={saveSessionEdits} />
-      <EditLogModal visible={editLogOpen} onClose={() => setEditLogOpen(false)} log={selectedLog} onSave={saveLog} onDelete={deleteLog} />
-      <ExerciseDetailModal visible={exerciseDetailOpen} onClose={() => setExerciseDetailOpen(false)} exercise={selectedExercise} prefs={prefs} setPrefs={setPrefs} onSaveExerciseDefaults={() => {}} />
-      <CreateExerciseModal visible={createExerciseOpen} onClose={() => setCreateExerciseOpen(false)} t={t} onSave={addCustomExercise} />
-      <ImportExercisesModal visible={importExercisesOpen} onClose={() => setImportExercisesOpen(false)} t={t} onImport={importExercises} />
-      <ExportDataModal visible={exportOpen} onClose={() => setExportOpen(false)} t={t} data={exportPayload} />
-      <ImportDataModal visible={importDataOpen} onClose={() => setImportDataOpen(false)} t={t} onImport={importAppData} />
-      <ToastBanner toast={toast} />
-      <CelebrationOverlay visible={celebrateDone} />
-    </SafeAreaView>
+        <WorkoutDetailModal visible={sessionModalOpen} onClose={() => setSessionModalOpen(false)} session={selectedSession} onSaveSession={saveSessionEdits} />
+        <EditLogModal visible={editLogOpen} onClose={() => setEditLogOpen(false)} log={selectedLog} onSave={saveLog} onDelete={deleteLog} />
+        <ExerciseDetailModal visible={exerciseDetailOpen} onClose={() => setExerciseDetailOpen(false)} exercise={selectedExercise} onSaveExerciseDefaults={() => {}} />
+        <CreateExerciseModal visible={createExerciseOpen} onClose={() => setCreateExerciseOpen(false)} onSave={addCustomExercise} />
+        <ImportExercisesModal visible={importExercisesOpen} onClose={() => setImportExercisesOpen(false)} onImport={importExercises} />
+        <ExportDataModal visible={exportOpen} onClose={() => setExportOpen(false)} data={exportPayload} />
+        <ImportDataModal visible={importDataOpen} onClose={() => setImportDataOpen(false)} onImport={importAppData} />
+        <ToastBanner toast={toast} />
+        <CelebrationOverlay visible={celebrateDone} />
+      </SafeAreaView>
+    </AppCtx.Provider>
   );
 }
 
