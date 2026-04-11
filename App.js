@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -11,12 +11,10 @@ import {
   Platform,
   StyleSheet,
   ActivityIndicator,
-  FlatList,
   Animated,
   Easing,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { createClient } from "@supabase/supabase-js";
 
 /** =========================
  * i18n (DE UI, Exercise Names EN)
@@ -130,6 +128,19 @@ const DS = {
   },
 };
 
+// App-wide context for cross-cutting concerns that were previously prop-drilled:
+// - `t`: i18n string bundle (used by almost every screen/modal)
+// - `prefs` / `setPrefs`: user preferences (read by ExerciseDetailModal)
+// - `showToast`: transient notifications (currently only called from the root, but
+//    exposed here so any component can surface errors without new prop chains)
+// Consumers call `useApp()` instead of pulling these off their props.
+const AppCtx = createContext(null);
+function useApp() {
+  const ctx = useContext(AppCtx);
+  if (!ctx) throw new Error("useApp() called outside <AppCtx.Provider>");
+  return ctx;
+}
+
 function useDebouncedValue(value, delay = 250) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -153,9 +164,7 @@ const MUSCLES = ["All", "Chest", "Back", "Legs", "Shoulders", "Arms", "Core", "F
 
 const STORAGE_KEY = "gymapp_state_v3";
 
-const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+// Cloud-Sync später via Supabase – Client wird angelegt, sobald Sync implementiert ist.
 
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
@@ -441,6 +450,21 @@ function smartSearch(exercises, query, cat, mus, limit = 80) {
   return filtered.slice(0, limit).map((x) => x.ex);
 }
 
+// Shared filter state for the exercise-search UI: debounces the query
+// and re-runs smartSearch via useMemo. Used by LibraryPickerList and
+// LibraryScreen (different result limits).
+function useExerciseFilter(allExercises, limit = 80) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("All");
+  const [mus, setMus] = useState("All");
+  const debouncedQ = useDebouncedValue(q, 250);
+  const results = useMemo(
+    () => smartSearch(allExercises, debouncedQ, cat, mus, limit),
+    [allExercises, debouncedQ, cat, mus, limit]
+  );
+  return { q, setQ, cat, setCat, mus, setMus, results };
+}
+
 function toNum(v) {
   const n = parseFloat(String(v ?? "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
@@ -637,30 +661,55 @@ function PulsePressable({ children, onPress, style }) {
   return (<Pressable onPress={doPress}><Animated.View style={[style, { transform: [{ scale }] }]}>{children}</Animated.View></Pressable>);
 }
 
-function CreateExerciseModal({ visible, onClose, t, onSave }) {
+// Shared wrapper for all app modals. Renders Modal + SafeAreaView + header
+// (title + close button). If `avoidKeyboard` is true, wraps the body in a
+// KeyboardAvoidingView so inputs stay visible when the keyboard opens.
+function BaseModal({ visible, onClose, title, closeLabel = "Close", avoidKeyboard = false, children }) {
+  const body = (
+    <>
+      <View style={styles.modalHeader}>
+        <Text style={styles.modalTitle}>{title}</Text>
+        <PillButton label={closeLabel} onPress={onClose} variant="secondary" />
+      </View>
+      {children}
+    </>
+  );
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalRoot}>
+        {avoidKeyboard ? (
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+            {body}
+          </KeyboardAvoidingView>
+        ) : (
+          body
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function CreateExerciseModal({ visible, onClose, onSave }) {
+  const { t } = useApp();
   const [name, setName] = useState("");
   const [category, setCategory] = useState("Machine");
   const [muscle, setMuscle] = useState("Legs");
   useEffect(() => { if (visible) { setName(""); setCategory("Machine"); setMuscle("Legs"); } }, [visible]);
   function save() { const n = name.trim(); if (!n) return; onSave({ id: `cx_${uid()}`, name: n, category, muscle, source: "custom" }); onClose(); }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.addCustom}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-            <GlassCard title={t.library.name}><TextInput value={name} onChangeText={setName} placeholder="z.B. Hack Squat" placeholderTextColor="#8B8B93" style={styles.input} /></GlassCard>
-            <GlassCard title={t.library.category}><View style={styles.rowWrap}>{CATEGORIES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={category === x} onPress={() => setCategory(x)} />))}</View></GlassCard>
-            <GlassCard title={t.library.muscle}><View style={styles.rowWrap}>{MUSCLES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={muscle === x} onPress={() => setMuscle(x)} />))}</View></GlassCard>
-            <View style={styles.rowWrap}><PillButton label={t.library.save} onPress={save} variant="primary" /></View>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.addCustom} closeLabel={t.today.close} avoidKeyboard>
+      <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <GlassCard title={t.library.name}><TextInput value={name} onChangeText={setName} placeholder="z.B. Hack Squat" placeholderTextColor="#8B8B93" style={styles.input} /></GlassCard>
+        <GlassCard title={t.library.category}><View style={styles.rowWrap}>{CATEGORIES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={category === x} onPress={() => setCategory(x)} />))}</View></GlassCard>
+        <GlassCard title={t.library.muscle}><View style={styles.rowWrap}>{MUSCLES.filter((x) => x !== "All").map((x) => (<Chip key={x} label={x} active={muscle === x} onPress={() => setMuscle(x)} />))}</View></GlassCard>
+        <View style={styles.rowWrap}><PillButton label={t.library.save} onPress={save} variant="primary" /></View>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
-function ImportExercisesModal({ visible, onClose, t, onImport }) {
+function ImportExercisesModal({ visible, onClose, onImport }) {
+  const { t } = useApp();
   const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
   useEffect(() => { if (visible) { setText(""); setMsg(""); } }, [visible]);
@@ -683,39 +732,33 @@ function ImportExercisesModal({ visible, onClose, t, onImport }) {
     setMsg(`${t.common.success}: Importiert ${result.added} • Übersprungen ${result.skipped}`);
   }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.importExercises}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-            <GlassCard title="JSON">
-              <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 180 }]} multiline autoCapitalize="none" />
-              <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
-              {msg ? <Text style={styles.help}>{msg}</Text> : null}
-            </GlassCard>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.importExercises} closeLabel={t.today.close} avoidKeyboard>
+      <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <GlassCard title="JSON">
+          <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 180 }]} multiline autoCapitalize="none" />
+          <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
+          {msg ? <Text style={styles.help}>{msg}</Text> : null}
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
-function ExportDataModal({ visible, onClose, t, data }) {
+function ExportDataModal({ visible, onClose, data }) {
+  const { t } = useApp();
   const [text, setText] = useState("");
   useEffect(() => { if (visible) setText(JSON.stringify(data, null, 2)); }, [visible, data]);
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.exportData}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Export JSON"><Text style={styles.help}>Markieren → Kopieren → an Freunde schicken.</Text><TextInput value={text} editable={false} style={[styles.input, { minHeight: 260 }]} multiline /></GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.exportData} closeLabel={t.today.close}>
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Export JSON"><Text style={styles.help}>Markieren → Kopieren → an Freunde schicken.</Text><TextInput value={text} editable={false} style={[styles.input, { minHeight: 260 }]} multiline /></GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
-function ImportDataModal({ visible, onClose, t, onImport }) {
+function ImportDataModal({ visible, onClose, onImport }) {
+  const { t } = useApp();
   const [text, setText] = useState("");
   const [msg, setMsg] = useState("");
   useEffect(() => { if (visible) { setText(""); setMsg(""); } }, [visible]);
@@ -727,24 +770,20 @@ function ImportDataModal({ visible, onClose, t, onImport }) {
     else setMsg(`${t.common.success}: Importiert.`);
   }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.importData}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
-            <GlassCard title="Import JSON">
-              <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 240 }]} multiline autoCapitalize="none" />
-              <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
-              {msg ? <Text style={styles.help}>{msg}</Text> : null}
-            </GlassCard>
-          </ScrollView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={t.library.importData} closeLabel={t.today.close} avoidKeyboard>
+      <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <GlassCard title="Import JSON">
+          <TextInput value={text} onChangeText={setText} placeholder={t.common.pasteHere} placeholderTextColor="#8B8B93" style={[styles.input, { minHeight: 240 }]} multiline autoCapitalize="none" />
+          <View style={styles.rowWrap}><PillButton label="Importieren" onPress={doImport} variant="primary" /></View>
+          {msg ? <Text style={styles.help}>{msg}</Text> : null}
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
-function WorkoutDetailModal({ visible, onClose, t, session, onSaveSession }) {
+function WorkoutDetailModal({ visible, onClose, session, onSaveSession }) {
+  const { t } = useApp();
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState(null);
   useEffect(() => { if (!visible || !session) return; setEditMode(false); setDraft(normalizeGymSession(session)); }, [visible, session]);
@@ -764,42 +803,40 @@ function WorkoutDetailModal({ visible, onClose, t, session, onSaveSession }) {
   }
   const data = draft || session;
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.history.title}</Text><PillButton label={t.today.close} onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title={t.history.summary}>
-            <Text style={styles.listTitle}>{session.planName}</Text>
-            <Text style={styles.listMeta}>{new Date(session.startedAt).toLocaleString()} • {t.history.duration}: ~{session.durationMin} min</Text>
-            <Text style={[styles.listMeta, { marginTop: 6 }]}>{t.workout.progress}: {session.doneSets}/{session.totalSets}</Text>
-            {session.status === "incomplete" ? <Text style={styles.incompleteBadge}>Incomplete</Text> : null}
-          </GlassCard>
-          <GlassCard title="Übungen">
-            {(data.items || []).map((it) => (
-              <View key={it.itemId} style={styles.planItem}>
-                <Text style={styles.listTitle}>{it.name}</Text>
-                {it.performed.map((s, idx) => (
-                  <View key={`${it.itemId}-${idx}`} style={[styles.detailSetRow, s.done ? styles.detailSetDone : null]}>
-                    <Text style={s.done ? styles.detailSetTextDone : styles.detailSetText}>{idx + 1}. {s.kg || "-"} kg × {s.reps || "-"} reps</Text>
-                    <Text style={s.done ? styles.detailBadgeDone : styles.detailBadge}>{s.done ? t.history.done : ""}</Text>
-                  </View>
-                ))}
-              </View>
-            ))}
-          </GlassCard>
-          {session.status === "incomplete" ? (
-            <View style={styles.rowWrap}>
-              {!editMode ? <PillButton label="Complete later" onPress={() => setEditMode(true)} variant="secondary" /> : null}
-              {editMode ? <PillButton label="Save" onPress={saveLaterEdits} variant="primary" /> : null}
+    <BaseModal visible={visible} onClose={onClose} title={t.history.title} closeLabel={t.today.close}>
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title={t.history.summary}>
+          <Text style={styles.listTitle}>{session.planName}</Text>
+          <Text style={styles.listMeta}>{new Date(session.startedAt).toLocaleString()} • {t.history.duration}: ~{session.durationMin} min</Text>
+          <Text style={[styles.listMeta, { marginTop: 6 }]}>{t.workout.progress}: {session.doneSets}/{session.totalSets}</Text>
+          {session.status === "incomplete" ? <Text style={styles.incompleteBadge}>Incomplete</Text> : null}
+        </GlassCard>
+        <GlassCard title="Übungen">
+          {(data.items || []).map((it) => (
+            <View key={it.itemId} style={styles.planItem}>
+              <Text style={styles.listTitle}>{it.name}</Text>
+              {it.performed.map((s, idx) => (
+                <View key={`${it.itemId}-${idx}`} style={[styles.detailSetRow, s.done ? styles.detailSetDone : null]}>
+                  <Text style={s.done ? styles.detailSetTextDone : styles.detailSetText}>{idx + 1}. {s.kg || "-"} kg × {s.reps || "-"} reps</Text>
+                  <Text style={s.done ? styles.detailBadgeDone : styles.detailBadge}>{s.done ? t.history.done : ""}</Text>
+                </View>
+              ))}
             </View>
-          ) : null}
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+          ))}
+        </GlassCard>
+        {session.status === "incomplete" ? (
+          <View style={styles.rowWrap}>
+            {!editMode ? <PillButton label="Complete later" onPress={() => setEditMode(true)} variant="secondary" /> : null}
+            {editMode ? <PillButton label="Save" onPress={saveLaterEdits} variant="primary" /> : null}
+          </View>
+        ) : null}
+      </ScrollView>
+    </BaseModal>
   );
 }
 
-function ExerciseDetailModal({ visible, onClose, exercise, prefs, setPrefs, onSaveExerciseDefaults }) {
+function ExerciseDetailModal({ visible, onClose, exercise, onSaveExerciseDefaults }) {
+  const { prefs, setPrefs } = useApp();
   const [tipText, setTipText] = useState("");
   if (!exercise) return null;
   const tipsByExercise = prefs?.localTipsByExercise || {};
@@ -811,19 +848,16 @@ function ExerciseDetailModal({ visible, onClose, exercise, prefs, setPrefs, onSa
     setTipText("");
   }
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Exercise Detail</Text><PillButton label="Close" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title={exercise.name}><Text style={styles.listMeta}>{exercise.category} • {exercise.muscle}</Text></GlassCard>
-          <GlassCard title="Tips">
-            <TextInput value={tipText} onChangeText={setTipText} placeholder="Add a tip..." placeholderTextColor="#8B8B93" style={styles.input} />
-            <View style={styles.rowWrap}><PillButton label="Add tip" onPress={addTip} variant="secondary" /></View>
-            {(tips || []).length === 0 ? <Text style={styles.help}>No tips yet.</Text> : (tips || []).map((x) => <Text key={x.id} style={styles.help}>• {x.text}</Text>)}
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title="Exercise Detail">
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title={exercise.name}><Text style={styles.listMeta}>{exercise.category} • {exercise.muscle}</Text></GlassCard>
+        <GlassCard title="Tips">
+          <TextInput value={tipText} onChangeText={setTipText} placeholder="Add a tip..." placeholderTextColor="#8B8B93" style={styles.input} />
+          <View style={styles.rowWrap}><PillButton label="Add tip" onPress={addTip} variant="secondary" /></View>
+          {(tips || []).length === 0 ? <Text style={styles.help}>No tips yet.</Text> : (tips || []).map((x) => <Text key={x.id} style={styles.help}>• {x.text}</Text>)}
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -831,17 +865,14 @@ function NoteModal({ visible, onClose, title, value, onSave }) {
   const [text, setText] = useState("");
   useEffect(() => { if (visible) setText(value || ""); }, [visible, value]);
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>{title || "Note"}</Text><PillButton label="Close" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Note">
-            <TextInput value={text} onChangeText={setText} multiline style={[styles.input, { minHeight: 140 }]} placeholder="Write note..." placeholderTextColor="#8B8B93" />
-            <View style={styles.rowWrap}><PillButton label="Save" onPress={() => { onSave(text); onClose(); }} variant="primary" /></View>
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title={title || "Note"}>
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Note">
+          <TextInput value={text} onChangeText={setText} multiline style={[styles.input, { minHeight: 140 }]} placeholder="Write note..." placeholderTextColor="#8B8B93" />
+          <View style={styles.rowWrap}><PillButton label="Save" onPress={() => { onSave(text); onClose(); }} variant="primary" /></View>
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -851,21 +882,18 @@ function EditLogModal({ visible, onClose, log, onSave, onDelete }) {
   useEffect(() => { if (!visible || !log) return; setType(log.type || "Gym"); setNote(log.note || ""); }, [visible, log]);
   if (!log) return null;
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Edit Log</Text><PillButton label="Cancel" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Type"><View style={styles.rowWrap}>{["Gym","Run","Bike","Swim","Other"].map((x) => (<Chip key={x} label={x} active={type === x} onPress={() => setType(x)} />))}</View></GlassCard>
-          <GlassCard title="Note">
-            <GlowTextInput value={note} onChangeText={setNote} multiline style={styles.input} placeholder="Note" placeholderTextColor="#8B8B93" />
-            <View style={styles.rowWrap}>
-              <PillButton label="Save" onPress={() => onSave({ ...log, type, note: note.trim() || undefined })} variant="primary" />
-              <PillButton label="Delete" onPress={() => onDelete(log.id)} variant="secondary" />
-            </View>
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title="Edit Log" closeLabel="Cancel">
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Type"><View style={styles.rowWrap}>{["Gym","Run","Bike","Swim","Other"].map((x) => (<Chip key={x} label={x} active={type === x} onPress={() => setType(x)} />))}</View></GlassCard>
+        <GlassCard title="Note">
+          <GlowTextInput value={note} onChangeText={setNote} multiline style={styles.input} placeholder="Note" placeholderTextColor="#8B8B93" />
+          <View style={styles.rowWrap}>
+            <PillButton label="Save" onPress={() => onSave({ ...log, type, note: note.trim() || undefined })} variant="primary" />
+            <PillButton label="Delete" onPress={() => onDelete(log.id)} variant="secondary" />
+          </View>
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
@@ -876,30 +904,28 @@ function EditPlanModal({ visible, onClose, plan, onSave, onDelete, onDuplicate }
   useEffect(() => { if (!visible || !plan) return; setName(plan.name || ""); setRest(String(plan.restDefaultSeconds || 180)); setConfirmDelete(false); }, [visible, plan]);
   if (!plan) return null;
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
-        <View style={styles.modalHeader}><Text style={styles.modalTitle}>Edit Plan</Text><PillButton label="Cancel" onPress={onClose} variant="secondary" /></View>
-        <ScrollView contentContainerStyle={styles.screenPad}>
-          <GlassCard title="Plan Meta">
-            <Text style={styles.label}>Name</Text>
-            <GlowTextInput value={name} onChangeText={setName} style={styles.input} placeholder="Plan Name" placeholderTextColor="#8B8B93" />
-            <Text style={styles.label}>Rest default (sec)</Text>
-            <GlowTextInput value={rest} onChangeText={(v) => setRest(v.replace(/[^\d]/g, ""))} keyboardType="number-pad" style={styles.input} placeholder="180" placeholderTextColor="#8B8B93" />
-            <View style={styles.rowWrap}>
-              <PillButton label="Save" onPress={() => onSave({ ...plan, name: name.trim() || plan.name, restDefaultSeconds: Number(rest || 0) || 0 })} variant="primary" />
-              <PillButton label="Duplicate" onPress={() => onDuplicate(plan)} variant="secondary" />
-            </View>
-            <View style={styles.rowWrap}>
-              {!confirmDelete ? <PillButton label="Delete Plan" onPress={() => setConfirmDelete(true)} variant="secondary" /> : <PillButton label="Confirm Delete" onPress={() => onDelete(plan.id)} variant="secondary" />}
-            </View>
-          </GlassCard>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
+    <BaseModal visible={visible} onClose={onClose} title="Edit Plan" closeLabel="Cancel">
+      <ScrollView contentContainerStyle={styles.screenPad}>
+        <GlassCard title="Plan Meta">
+          <Text style={styles.label}>Name</Text>
+          <GlowTextInput value={name} onChangeText={setName} style={styles.input} placeholder="Plan Name" placeholderTextColor="#8B8B93" />
+          <Text style={styles.label}>Rest default (sec)</Text>
+          <GlowTextInput value={rest} onChangeText={(v) => setRest(v.replace(/[^\d]/g, ""))} keyboardType="number-pad" style={styles.input} placeholder="180" placeholderTextColor="#8B8B93" />
+          <View style={styles.rowWrap}>
+            <PillButton label="Save" onPress={() => onSave({ ...plan, name: name.trim() || plan.name, restDefaultSeconds: Number(rest || 0) || 0 })} variant="primary" />
+            <PillButton label="Duplicate" onPress={() => onDuplicate(plan)} variant="secondary" />
+          </View>
+          <View style={styles.rowWrap}>
+            {!confirmDelete ? <PillButton label="Delete Plan" onPress={() => setConfirmDelete(true)} variant="secondary" /> : <PillButton label="Confirm Delete" onPress={() => onDelete(plan.id)} variant="secondary" />}
+          </View>
+        </GlassCard>
+      </ScrollView>
+    </BaseModal>
   );
 }
 
-function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, todayAgenda, onDoneAgenda, onStartAgendaGym, onStartAgendaEndurance, onMoveAgendaTomorrow, onCopyAgendaNextWeek, onOpenLog }) {
+function TodayScreen({ note, setNote, logs, addLog, sessions, onOpenSession, todayAgenda, onDoneAgenda, onStartAgendaGym, onStartAgendaEndurance, onMoveAgendaTomorrow, onCopyAgendaNextWeek, onOpenLog }) {
+  const { t } = useApp();
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <Text style={styles.h1}>{t.today.title}</Text>
@@ -926,9 +952,11 @@ function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, 
         </View>
       </GlassCard>
       <GlassCard title={t.today.workouts}>
-        <FlatList data={sessions.slice(0, 8)} keyExtractor={(item) => item.id} scrollEnabled={false} initialNumToRender={6} ListEmptyComponent={<ListEmpty text={t.today.workoutsEmpty} />}
-          renderItem={({ item: s }) => (
-            <View style={styles.listItemRow}>
+        {sessions.length === 0 ? (
+          <ListEmpty text={t.today.workoutsEmpty} />
+        ) : (
+          sessions.slice(0, 8).map((s) => (
+            <View key={s.id} style={styles.listItemRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.listTitle}>{s.planName}</Text>
                 <Text style={styles.listMeta}>{new Date(s.startedAt).toLocaleString()} • {s.doneSets}/{s.totalSets} Sets • ~{s.durationMin} min</Text>
@@ -936,30 +964,29 @@ function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, 
               </View>
               <RowButton label={t.today.open} onPress={() => onOpenSession(s)} variant="secondary" />
             </View>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
       <GlassCard title={t.today.recent}>
-        <FlatList data={logs.slice(0, 10)} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<ListEmpty text={t.today.empty} />}
-          renderItem={({ item: l }) => (
-            <Pressable style={styles.listItem} onPress={() => onOpenLog(l)}>
+        {logs.length === 0 ? (
+          <ListEmpty text={t.today.empty} />
+        ) : (
+          logs.slice(0, 10).map((l) => (
+            <Pressable key={l.id} style={styles.listItem} onPress={() => onOpenLog(l)}>
               <Text style={styles.listTitle}>{l.type}</Text>
               <Text style={styles.listMeta}>{new Date(l.createdAt).toLocaleString()}</Text>
               {l.note ? <Text style={styles.listBody}>{l.note}</Text> : null}
             </Pressable>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
     </ScrollView>
   );
 }
 
-function LibraryPickerList({ t, allExercises, onPick }) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("All");
-  const [mus, setMus] = useState("All");
-  const debouncedQ = useDebouncedValue(q, 250);
-  const filtered = useMemo(() => smartSearch(allExercises, debouncedQ, cat, mus, 120), [allExercises, debouncedQ, cat, mus]);
+function LibraryPickerList({ allExercises, onPick }) {
+  const { t } = useApp();
+  const { q, setQ, cat, setCat, mus, setMus, results: filtered } = useExerciseFilter(allExercises, 120);
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <GlassCard title={t.library.search}>
@@ -970,20 +997,23 @@ function LibraryPickerList({ t, allExercises, onPick }) {
         <View style={styles.rowWrap}>{MUSCLES.map((x) => (<Chip key={x} label={x} active={mus === x} onPress={() => setMus(x)} />))}</View>
       </GlassCard>
       <GlassCard title="Ergebnisse">
-        <FlatList data={filtered} keyExtractor={(item) => item.id} scrollEnabled={false} initialNumToRender={12} ListEmptyComponent={<ListEmpty text={t.library.noResults} />}
-          renderItem={({ item: e }) => (
-            <View style={styles.listItemRow}>
+        {filtered.length === 0 ? (
+          <ListEmpty text={t.library.noResults} />
+        ) : (
+          filtered.map((e) => (
+            <View key={e.id} style={styles.listItemRow}>
               <View style={{ flex: 1 }}><Text style={styles.listTitle}>{e.name}</Text><Text style={styles.listMeta}>{e.category} • {e.muscle}</Text></View>
               <RowButton label={t.library.addToPlan} onPress={() => onPick(e)} variant="secondary" />
             </View>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
     </ScrollView>
   );
 }
 
-function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStartWorkout, allExercises }) {
+function PlansScreen({ plans, setPlans, activePlanId, setActivePlanId, onStartWorkout, allExercises }) {
+  const { t } = useApp();
   const [newPlanName, setNewPlanName] = useState("");
   const [editPlanOpen, setEditPlanOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -1010,14 +1040,16 @@ function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStar
           <View style={styles.rowWrap}><PillButton label={t.plans.create} onPress={createPlan} variant="primary" /></View>
         </GlassCard>
         <GlassCard title="Deine Pläne">
-          <FlatList data={plans} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<ListEmpty text="No plans yet." />}
-            renderItem={({ item: p }) => (
-              <View style={styles.listItemRow}>
+          {plans.length === 0 ? (
+            <ListEmpty text="No plans yet." />
+          ) : (
+            plans.map((p) => (
+              <View key={p.id} style={styles.listItemRow}>
                 <View style={{ flex: 1 }}><Text style={styles.listTitle}>{p.name}</Text><Text style={styles.listMeta}>Rest: {p.restDefaultSeconds}s • Übungen: {p.items.length}</Text></View>
                 <RowButton label={t.plans.open} onPress={() => setActivePlanId(p.id)} variant="secondary" />
               </View>
-            )}
-          />
+            ))
+          )}
         </GlassCard>
       </ScrollView>
     );
@@ -1055,29 +1087,30 @@ function PlansScreen({ t, plans, setPlans, activePlanId, setActivePlanId, onStar
           </View>
         ))}
       </GlassCard>
-      <Modal visible={libraryOpen} animationType="slide" onRequestClose={() => setLibraryOpen(false)}>
-        <SafeAreaView style={styles.modalRoot}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{t.library.title}</Text><PillButton label={t.library.close} onPress={() => setLibraryOpen(false)} variant="secondary" /></View>
-          <LibraryPickerList t={t} allExercises={allExercises} onPick={(ex) => { addExerciseToPlan(activePlan, ex); setLibraryOpen(false); }} />
-        </SafeAreaView>
-      </Modal>
+      <BaseModal visible={libraryOpen} onClose={() => setLibraryOpen(false)} title={t.library.title} closeLabel={t.library.close}>
+        <LibraryPickerList allExercises={allExercises} onPick={(ex) => { addExerciseToPlan(activePlan, ex); setLibraryOpen(false); }} />
+      </BaseModal>
       <EditPlanModal visible={editPlanOpen} onClose={() => setEditPlanOpen(false)} plan={activePlan} onSave={savePlanMeta} onDelete={deletePlan} onDuplicate={duplicatePlan} />
     </ScrollView>
   );
 }
 
-function WorkoutScreen({ t, plan, workout, setWorkout, onFinish, allExercises, onOpenExerciseDetail }) {
+function WorkoutScreen({ plan, workout, setWorkout, onFinish, allExercises, onOpenExerciseDetail }) {
+  const { t } = useApp();
   const restIntervalRef = useRef(null);
   const [exerciseNoteModal, setExerciseNoteModal] = useState({ open: false, itemId: null });
   const [setNoteModal, setSetNoteModal] = useState({ open: false, itemId: null, setIdx: -1 });
 
+  // NB: setWorkout stammt aus useState im Parent und ist garantiert stabil.
+  // Absichtlich NICHT in der Dep-Liste, damit der Interval nicht bei jedem Parent-Re-Render neu startet.
   useEffect(() => {
     if (!workout.restRunning) return;
     restIntervalRef.current = setInterval(() => {
       setWorkout((prev) => { if (!prev) return prev; const next = prev.restRemaining <= 1 ? 0 : prev.restRemaining - 1; const stop = next === 0; return { ...prev, restRemaining: next, restRunning: stop ? false : true }; });
     }, 1000);
     return () => { if (restIntervalRef.current) clearInterval(restIntervalRef.current); restIntervalRef.current = null; };
-  }, [workout.restRunning, setWorkout]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workout.restRunning]);
 
   const items = useMemo(() => plan.items.map((it) => ({ ...it, exercise: allExercises.find((e) => e.id === it.exerciseId) || { name: "Exercise", category: "", muscle: "", source: "unknown" } })), [plan, allExercises]);
   const totals = useMemo(() => { let totalSets = 0; let doneSets = 0; items.forEach((it) => { const sets = workout.sets[it.id] || []; totalSets += sets.length; doneSets += sets.filter((s) => s.done).length; }); return { totalSets, doneSets }; }, [items, workout]);
@@ -1154,12 +1187,9 @@ function WorkoutScreen({ t, plan, workout, setWorkout, onFinish, allExercises, o
   );
 }
 
-function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, onOpenCreate, onOpenImportExercises, onOpenExport, onOpenImportData, packInstalling, packStatusText, onInstallPack, prefs, setPrefs, onOpenExerciseDetail }) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("All");
-  const [mus, setMus] = useState("All");
-  const debouncedQ = useDebouncedValue(q, 250);
-  const filtered = useMemo(() => smartSearch(allExercises, debouncedQ, cat, mus, 60), [allExercises, debouncedQ, cat, mus]);
+function LibraryScreen({ allExercises, userExercises, onDeleteUserExercise, onOpenCreate, onOpenImportExercises, onOpenExport, onOpenImportData, packInstalling, packStatusText, onInstallPack, onOpenExerciseDetail }) {
+  const { t } = useApp();
+  const { q, setQ, cat, setCat, mus, setMus, results: filtered } = useExerciseFilter(allExercises, 60);
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <Text style={styles.h1}>{t.library.title}</Text>
@@ -1171,25 +1201,29 @@ function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, o
         <View style={styles.rowWrap}>{MUSCLES.map((x) => (<Chip key={x} label={x} active={mus === x} onPress={() => setMus(x)} />))}</View>
       </GlassCard>
       <GlassCard title="Ergebnisse">
-        <FlatList data={filtered} keyExtractor={(item) => item.id} scrollEnabled={false} initialNumToRender={12} ListEmptyComponent={<ListEmpty text={t.library.noResults} />}
-          renderItem={({ item: e }) => (
-            <Pressable style={styles.listItem} onPress={() => onOpenExerciseDetail(e)}>
+        {filtered.length === 0 ? (
+          <ListEmpty text={t.library.noResults} />
+        ) : (
+          filtered.map((e) => (
+            <Pressable key={e.id} style={styles.listItem} onPress={() => onOpenExerciseDetail(e)}>
               <Text style={styles.listTitle}>{e.name}</Text>
               <Text style={styles.listMeta}>{e.category} • {e.muscle}</Text>
             </Pressable>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
       <GlassCard title={t.library.customTitle}>
         <View style={styles.rowWrap}><PillButton label={t.library.addCustom} onPress={onOpenCreate} variant="primary" /></View>
-        <FlatList data={userExercises.slice(0, 30)} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<ListEmpty text={t.library.emptyCustom} />}
-          renderItem={({ item: e }) => (
-            <View style={styles.listItemRow}>
+        {userExercises.length === 0 ? (
+          <ListEmpty text={t.library.emptyCustom} />
+        ) : (
+          userExercises.slice(0, 30).map((e) => (
+            <View key={e.id} style={styles.listItemRow}>
               <View style={{ flex: 1 }}><Text style={styles.listTitle}>{e.name}</Text><Text style={styles.listMeta}>{e.category} • {e.muscle}</Text></View>
               <RowButton label={t.library.delete} onPress={() => onDeleteUserExercise(e.id)} variant="secondary" />
             </View>
-          )}
-        />
+          ))
+        )}
       </GlassCard>
       <GlassCard title={t.library.dataTitle}>
         <View style={styles.rowWrap}>
@@ -1207,7 +1241,7 @@ function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, o
   );
 }
 
-function ProgressScreen({ sessions, logs, calendarEntries, allExercises, prefs, setPrefs }) {
+function ProgressScreen({ sessions, logs, calendarEntries, allExercises }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const weekStart = addDays(startOfWeekMonday(new Date()), weekOffset * 7);
   const weekDays = Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i));
@@ -1230,15 +1264,23 @@ function ProgressScreen({ sessions, logs, calendarEntries, allExercises, prefs, 
         </View>
       </GlassCard>
       <GlassCard title="Recent Workouts">
-        <FlatList data={sessions.slice(0, 20)} keyExtractor={(item) => item.id} scrollEnabled={false} ListEmptyComponent={<Text style={styles.muted}>No sessions yet.</Text>}
-          renderItem={({ item: s }) => (<View style={styles.listItem}><Text style={styles.listTitle}>{s.planName}</Text><Text style={styles.listMeta}>{new Date(s.startedAt).toLocaleString()} • {s.doneSets}/{s.totalSets} sets</Text></View>)}
-        />
+        {sessions.length === 0 ? (
+          <Text style={styles.muted}>No sessions yet.</Text>
+        ) : (
+          sessions.slice(0, 20).map((s) => (
+            <View key={s.id} style={styles.listItem}>
+              <Text style={styles.listTitle}>{s.planName}</Text>
+              <Text style={styles.listMeta}>{new Date(s.startedAt).toLocaleString()} • {s.doneSets}/{s.totalSets} sets</Text>
+            </View>
+          ))
+        )}
       </GlassCard>
     </ScrollView>
   );
 }
 
-function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calendarTemplates, setCalendarTemplates, calendarWeekOffset, setCalendarWeekOffset, onApplyTemplatesToWeek }) {
+function CalendarScreen({ plans, calendarEntries, setCalendarEntries, calendarTemplates, setCalendarTemplates, calendarWeekOffset, setCalendarWeekOffset, onApplyTemplatesToWeek }) {
+  const { t } = useApp();
   const [entryModalOpen, setEntryModalOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [entryDate, setEntryDate] = useState("");
@@ -1281,11 +1323,11 @@ function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calenda
           </View>
         </View>
       </GlassCard>
-      <FlatList data={weekDays} keyExtractor={(d) => formatDateKey(d)} scrollEnabled={false} renderItem={({ item: d }) => {
+      {weekDays.map((d) => {
         const dateKey = formatDateKey(d);
         const entries = entriesForDate(dateKey);
         return (
-          <GlassCard title={`${weekdayLabel[weekdayMonday1to7(d) - 1]} • ${dateKey}`}>
+          <GlassCard key={dateKey} title={`${weekdayLabel[weekdayMonday1to7(d) - 1]} • ${dateKey}`}>
             <View style={styles.rowWrap}><RowButton label="+ Add" onPress={() => openNewEntry(d)} variant="secondary" /></View>
             {entries.length === 0 ? <ListEmpty text={t.calendar.empty} /> : entries.map((e) => (
               <View key={e.id} style={styles.planItem}>
@@ -1299,27 +1341,24 @@ function CalendarScreen({ t, plans, calendarEntries, setCalendarEntries, calenda
             ))}
           </GlassCard>
         );
-      }} />
-      <Modal visible={entryModalOpen} animationType="slide" onRequestClose={() => setEntryModalOpen(false)}>
-        <SafeAreaView style={styles.modalRoot}>
-          <View style={styles.modalHeader}><Text style={styles.modalTitle}>{editingEntryId ? "Edit Entry" : "New Entry"}</Text><PillButton label={t.today.close} onPress={() => setEntryModalOpen(false)} variant="secondary" /></View>
-          <ScrollView contentContainerStyle={styles.screenPad}>
-            <GlassCard title="Entry">
-              <Text style={styles.label}>Date (YYYY-MM-DD)</Text><TextInput value={entryDate} onChangeText={setEntryDate} style={styles.input} placeholder="2026-01-01" placeholderTextColor="#8B8B93" autoCapitalize="none" />
-              <Text style={styles.label}>Title</Text><TextInput value={entryTitle} onChangeText={setEntryTitle} style={styles.input} placeholder="Run Zone 2" placeholderTextColor="#8B8B93" />
-              <Text style={styles.label}>Sport</Text>
-              <View style={styles.rowWrap}>{SPORT_TYPES.map((x) => (<Chip key={x} label={x} active={entrySportType === x} onPress={() => setEntrySportType(x)} />))}</View>
-              <View style={styles.setRow}>
-                <View style={{ flex: 1, marginRight: 10 }}><Text style={styles.label}>Start (HH:MM)</Text><TextInput value={entryTime} onChangeText={setEntryTime} style={styles.inputSmall} placeholder="07:00" placeholderTextColor="#8B8B93" autoCapitalize="none" /></View>
-                <View style={{ flex: 1 }}><Text style={styles.label}>Duration (min)</Text><TextInput value={entryDuration} onChangeText={(v) => setEntryDuration(v.replace(/[^\d]/g, ""))} style={styles.inputSmall} placeholder="45" placeholderTextColor="#8B8B93" keyboardType="number-pad" /></View>
-              </View>
-              <Text style={styles.label}>Status</Text>
-              <View style={styles.rowWrap}>{["planned","done","skipped"].map((st) => (<Chip key={st} label={st} active={entryStatus === st} onPress={() => setEntryStatus(st)} />))}</View>
-              <View style={styles.rowWrap}><PillButton label="Save" onPress={saveEntry} variant="primary" /></View>
-            </GlassCard>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      })}
+      <BaseModal visible={entryModalOpen} onClose={() => setEntryModalOpen(false)} title={editingEntryId ? "Edit Entry" : "New Entry"} closeLabel={t.today.close}>
+        <ScrollView contentContainerStyle={styles.screenPad}>
+          <GlassCard title="Entry">
+            <Text style={styles.label}>Date (YYYY-MM-DD)</Text><TextInput value={entryDate} onChangeText={setEntryDate} style={styles.input} placeholder="2026-01-01" placeholderTextColor="#8B8B93" autoCapitalize="none" />
+            <Text style={styles.label}>Title</Text><TextInput value={entryTitle} onChangeText={setEntryTitle} style={styles.input} placeholder="Run Zone 2" placeholderTextColor="#8B8B93" />
+            <Text style={styles.label}>Sport</Text>
+            <View style={styles.rowWrap}>{SPORT_TYPES.map((x) => (<Chip key={x} label={x} active={entrySportType === x} onPress={() => setEntrySportType(x)} />))}</View>
+            <View style={styles.setRow}>
+              <View style={{ flex: 1, marginRight: 10 }}><Text style={styles.label}>Start (HH:MM)</Text><TextInput value={entryTime} onChangeText={setEntryTime} style={styles.inputSmall} placeholder="07:00" placeholderTextColor="#8B8B93" autoCapitalize="none" /></View>
+              <View style={{ flex: 1 }}><Text style={styles.label}>Duration (min)</Text><TextInput value={entryDuration} onChangeText={(v) => setEntryDuration(v.replace(/[^\d]/g, ""))} style={styles.inputSmall} placeholder="45" placeholderTextColor="#8B8B93" keyboardType="number-pad" /></View>
+            </View>
+            <Text style={styles.label}>Status</Text>
+            <View style={styles.rowWrap}>{["planned","done","skipped"].map((st) => (<Chip key={st} label={st} active={entryStatus === st} onPress={() => setEntryStatus(st)} />))}</View>
+            <View style={styles.rowWrap}><PillButton label="Save" onPress={saveEntry} variant="primary" /></View>
+          </GlassCard>
+        </ScrollView>
+      </BaseModal>
     </ScrollView>
   );
 }
@@ -1340,11 +1379,63 @@ function EnduranceScreen({ templates, sessions, plans, onSaveTemplate, onDeleteT
   );
 }
 
+// Consolidates the ~17 UI-only useState hooks that used to live at the top of
+// <App/>. Every modal flag, "selected item" cursor, transient banner
+// (toast/celebrate), note draft, tab, hydration flag, and pack-install progress
+// lives here. State that is persisted to AsyncStorage or prop-drilled to
+// children as a setter (plans/logs/sessions/workout/...) deliberately stays in
+// plain useState so we don't have to route every child setter through dispatch.
+const INITIAL_UI = {
+  hydrated: false,
+  tab: "today",
+  note: "",
+  toast: { text: "", type: "info" },
+  celebrateDone: false,
+  packInstalling: false,
+  packStatusText: "",
+  sessionModal: { open: false, session: null },
+  editLogModal: { open: false, log: null },
+  exerciseDetailModal: { open: false, exercise: null },
+  createExerciseOpen: false,
+  importExercisesOpen: false,
+  exportOpen: false,
+  importDataOpen: false,
+};
+
+function uiReducer(state, action) {
+  switch (action.type) {
+    case "HYDRATED": return { ...state, hydrated: true };
+    case "TAB": return { ...state, tab: action.tab };
+    case "NOTE": return { ...state, note: action.note };
+    case "TOAST": return { ...state, toast: action.toast };
+    case "CELEBRATE": return { ...state, celebrateDone: action.value };
+    case "PACK": {
+      const next = { ...state };
+      if (action.installing !== undefined) next.packInstalling = action.installing;
+      if (action.text !== undefined) next.packStatusText = action.text;
+      return next;
+    }
+    case "OPEN_SESSION": return { ...state, sessionModal: { open: true, session: action.session } };
+    case "CLOSE_SESSION": return { ...state, sessionModal: { ...state.sessionModal, open: false } };
+    case "UPDATE_SELECTED_SESSION": {
+      const current = state.sessionModal.session;
+      const next = typeof action.next === "function" ? action.next(current) : action.next;
+      return { ...state, sessionModal: { ...state.sessionModal, session: next } };
+    }
+    case "OPEN_LOG": return { ...state, editLogModal: { open: true, log: action.log } };
+    case "CLOSE_LOG": return { ...state, editLogModal: { ...state.editLogModal, open: false } };
+    case "OPEN_EXERCISE_DETAIL": return { ...state, exerciseDetailModal: { open: true, exercise: action.exercise } };
+    case "CLOSE_EXERCISE_DETAIL": return { ...state, exerciseDetailModal: { ...state.exerciseDetailModal, open: false } };
+    case "OPEN_MODAL": return { ...state, [action.key]: true };
+    case "CLOSE_MODAL": return { ...state, [action.key]: false };
+    default: return state;
+  }
+}
+
 export default function App() {
   const t = STR[LANG];
-  const [hydrated, setHydrated] = useState(false);
-  const [tab, setTab] = useState("today");
-  const [note, setNote] = useState("");
+  const [ui, dispatchUi] = useReducer(uiReducer, INITIAL_UI);
+  const { hydrated, tab, note, toast, celebrateDone, packInstalling, packStatusText } = ui;
   const [logs, setLogs] = useState([]);
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
   const [userExercises, setUserExercises] = useState([]);
@@ -1358,37 +1449,40 @@ export default function App() {
   const [workout, setWorkout] = useState(null);
   const [enduranceTemplates, setEnduranceTemplates] = useState([]);
   const [enduranceSessions, setEnduranceSessions] = useState([]);
-  const [enduranceWorkout, setEnduranceWorkout] = useState(null);
-  const [sessionModalOpen, setSessionModalOpen] = useState(false);
-  const [selectedSession, setSelectedSession] = useState(null);
-  const [editLogOpen, setEditLogOpen] = useState(false);
-  const [selectedLog, setSelectedLog] = useState(null);
-  const [exerciseDetailOpen, setExerciseDetailOpen] = useState(false);
-  const [selectedExercise, setSelectedExercise] = useState(null);
-  const [createExerciseOpen, setCreateExerciseOpen] = useState(false);
-  const [importExercisesOpen, setImportExercisesOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [importDataOpen, setImportDataOpen] = useState(false);
-  const [packInstalling, setPackInstalling] = useState(false);
-  const [packStatusText, setPackStatusText] = useState("");
-  const [toast, setToast] = useState({ text: "", type: "info" });
-  const [celebrateDone, setCelebrateDone] = useState(false);
   const TAB_BOTTOM = Platform.OS === "ios" ? 34 : 14;
 
   function addLog(type, overrideNote) {
     setLogs((prev) => [{ id: uid(), type, note: (overrideNote ?? note).trim() ? (overrideNote ?? note).trim() : undefined, createdAt: Date.now() }, ...prev]);
-    setNote("");
+    dispatchUi({ type: "NOTE", note: "" });
   }
 
-  function showToast(text, type = "info") { setToast({ text, type }); setTimeout(() => setToast({ text: "", type: "info" }), 1800); }
+  const toastTimerRef = useRef(null);
+  function showToast(text, type = "info") {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    dispatchUi({ type: "TOAST", toast: { text, type } });
+    toastTimerRef.current = setTimeout(() => {
+      dispatchUi({ type: "TOAST", toast: { text: "", type: "info" } });
+      toastTimerRef.current = null;
+    }, 1800);
+  }
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
+
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
+
+  const saveErrorNotifiedRef = useRef(false);
 
   useEffect(() => {
     (async () => {
+      let hadError = false;
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (!raw) { setHydrated(true); return; }
+        if (!raw) { if (isMountedRef.current) dispatchUi({ type: "HYDRATED" }); return; }
         const parsed = JSON.parse(raw);
-        if (!parsed || (parsed.v !== 3 && parsed.v !== 4 && parsed.v !== 5)) { setHydrated(true); return; }
+        if (!parsed || (parsed.v !== 3 && parsed.v !== 4 && parsed.v !== 5)) { if (isMountedRef.current) dispatchUi({ type: "HYDRATED" }); return; }
+        if (!isMountedRef.current) return;
         if (Array.isArray(parsed.logs)) setLogs(parsed.logs);
         if (Array.isArray(parsed.plans)) setPlans(parsed.plans);
         if (Array.isArray(parsed.sessions)) setSessions(parsed.sessions.map(normalizeGymSession));
@@ -1398,16 +1492,39 @@ export default function App() {
         if (Array.isArray(parsed.enduranceSessions)) setEnduranceSessions(parsed.enduranceSessions);
         if (parsed.prefs) setPrefs(normalizePrefs(parsed.prefs));
         if (Array.isArray(parsed.userExercises)) setUserExercises(parsed.userExercises);
-      } catch (e) { } finally { setHydrated(true); }
+      } catch (e) {
+        hadError = true;
+        console.error("[CBE] hydration failed", e);
+      } finally {
+        if (isMountedRef.current) dispatchUi({ type: "HYDRATED" });
+        if (hadError && isMountedRef.current) {
+          showToast("Gespeicherte Daten konnten nicht geladen werden", "error");
+        }
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Monolithischer Save-Effekt: Alle persistenten Slices landen in einem einzigen
+  // AsyncStorage-Blob unter STORAGE_KEY. Die grosse Dep-Liste ist Absicht – so wird
+  // jede Änderung an beliebigen Slices zu einem konsolidierten Schreibvorgang,
+  // wodurch partielle Writes / inkonsistente Schemas vermieden werden.
+  // Der 400ms Debounce verhindert Thrash bei vielen schnellen Updates
+  // (z.B. während des Tippens im Plan-Editor).
   const saveTimerRef = useRef(null);
   useEffect(() => {
     if (!hydrated) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
-      try { await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 5, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs })); } catch (e) { }
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 5, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs }));
+      } catch (e) {
+        console.error("[CBE] save failed", e);
+        if (!saveErrorNotifiedRef.current && isMountedRef.current) {
+          saveErrorNotifiedRef.current = true;
+          showToast("Speichern fehlgeschlagen", "error");
+        }
+      }
     }, 400);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [hydrated, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs]);
@@ -1424,16 +1541,16 @@ export default function App() {
 
   async function installFreeExerciseDbPack() {
     try {
-      setPackInstalling(true); setPackStatusText("Downloading…");
+      dispatchUi({ type: "PACK", installing: true, text: "Downloading…" });
       const res = await fetch(FREE_EXERCISE_DB_URL);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setPackStatusText("Parsing…");
+      dispatchUi({ type: "PACK", text: "Parsing…" });
       const arr = await res.json();
       if (!Array.isArray(arr)) throw new Error("Not an array.");
       const mapped = arr.map((raw) => ({ id: `fedb_${String(raw?.id || raw?.name || uid())}`, name: String(raw?.name || "").trim() || "Exercise", category: mapEquipmentToCategory(raw?.equipment), muscle: mapPrimaryMuscleToGroup(raw?.primaryMuscles), source: "pack:free-exercise-db", meta: { equipment: raw?.equipment ?? "", primaryMuscles: raw?.primaryMuscles ?? [] } }));
       const result = importExercises(mapped);
-      setPackStatusText(`Done. Added ${result.added} • Skipped ${result.skipped}`);
-    } catch (e) { setPackStatusText(`Error: ${String(e?.message || e)}`); } finally { setPackInstalling(false); }
+      dispatchUi({ type: "PACK", text: `Done. Added ${result.added} • Skipped ${result.skipped}` });
+    } catch (e) { dispatchUi({ type: "PACK", text: `Error: ${String(e?.message || e)}` }); } finally { dispatchUi({ type: "PACK", installing: false }); }
   }
 
   const exportPayload = useMemo(() => ({ v: 5, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs }), [logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs]);
@@ -1449,7 +1566,8 @@ export default function App() {
     setEnduranceSessions(Array.isArray(obj.enduranceSessions) ? obj.enduranceSessions : []);
     setUserExercises(Array.isArray(obj.userExercises) ? obj.userExercises : []);
     setPrefs(normalizePrefs(obj.prefs));
-    setTab("today"); setActivePlanId(null);
+    dispatchUi({ type: "TAB", tab: "today" });
+    setActivePlanId(null);
     return { ok: true };
   }
 
@@ -1481,15 +1599,21 @@ export default function App() {
     const session = { id: uid(), type: "Gym", planId: plan.id, planName: plan.name, startedAt: workout.startedAt, endedAt, durationMin: minutesBetween(workout.startedAt, endedAt), totalSets, doneSets, totalVolumeKg: Number(totalVolumeKg.toFixed(1)), totalReps, status: isSessionComplete(items) ? "complete" : "incomplete", items };
     setSessions((prev) => [session, ...prev]);
     addLog("Gym", `Workout: ${plan.name}\nSets: ${doneSets}/${totalSets}`);
-    setWorkout(null); setCelebrateDone(true); setTimeout(() => setCelebrateDone(false), 800);
+    setWorkout(null);
+    dispatchUi({ type: "CELEBRATE", value: true });
+    setTimeout(() => dispatchUi({ type: "CELEBRATE", value: false }), 800);
   }
 
-  function openSession(session) { setSelectedSession(session); setSessionModalOpen(true); }
-  function openLog(log) { setSelectedLog(log); setEditLogOpen(true); }
-  function saveLog(nextLog) { setLogs((prev) => prev.map((l) => (l.id === nextLog.id ? { ...l, ...nextLog } : l))); setEditLogOpen(false); }
-  function deleteLog(logId) { setLogs((prev) => prev.filter((l) => l.id !== logId)); setEditLogOpen(false); }
-  function openExerciseDetail(exercise) { setSelectedExercise(exercise); setExerciseDetailOpen(true); }
-  function saveSessionEdits(updatedSession) { const normalized = normalizeGymSession(updatedSession); setSessions((prev) => prev.map((s) => (s.id === normalized.id ? normalized : s))); setSelectedSession((prev) => (prev?.id === normalized.id ? normalized : prev)); }
+  function openSession(session) { dispatchUi({ type: "OPEN_SESSION", session }); }
+  function openLog(log) { dispatchUi({ type: "OPEN_LOG", log }); }
+  function saveLog(nextLog) { setLogs((prev) => prev.map((l) => (l.id === nextLog.id ? { ...l, ...nextLog } : l))); dispatchUi({ type: "CLOSE_LOG" }); }
+  function deleteLog(logId) { setLogs((prev) => prev.filter((l) => l.id !== logId)); dispatchUi({ type: "CLOSE_LOG" }); }
+  function openExerciseDetail(exercise) { dispatchUi({ type: "OPEN_EXERCISE_DETAIL", exercise }); }
+  function saveSessionEdits(updatedSession) {
+    const normalized = normalizeGymSession(updatedSession);
+    setSessions((prev) => prev.map((s) => (s.id === normalized.id ? normalized : s)));
+    dispatchUi({ type: "UPDATE_SELECTED_SESSION", next: (prev) => (prev?.id === normalized.id ? normalized : prev) });
+  }
 
   const todayKey = formatDateKey(new Date());
   const todayAgenda = useMemo(() => calendarEntries.filter((e) => e.date === todayKey).sort((a, b) => parseTimeToMin(a.startTime) - parseTimeToMin(b.startTime)), [calendarEntries, todayKey]);
@@ -1503,82 +1627,98 @@ export default function App() {
     setCalendarEntries((prev) => { const next = [...prev]; const now = Date.now(); for (const tpl of calendarTemplates) { if (!tpl?.active) continue; const wd = Math.min(7, Math.max(1, Number(tpl.weekday) || 1)); const date = formatDateKey(addDays(start, wd - 1)); const existingIdx = next.findIndex((e) => e.date === date && e.templateId === tpl.id); const mapped = { id: existingIdx >= 0 ? next[existingIdx].id : uid(), date, startTime: tpl.startTime || "07:00", durationMin: Math.max(1, parseInt(String(tpl.durationMin || 45), 10) || 45), title: tpl.title || "Template", sportType: tpl.sportType || "Other", planId: tpl.sportType === "Gym" ? tpl.planId || null : null, status: existingIdx >= 0 ? next[existingIdx].status : "planned", templateId: tpl.id, createdAt: existingIdx >= 0 ? next[existingIdx].createdAt : now, updatedAt: now }; if (existingIdx >= 0) next[existingIdx] = { ...next[existingIdx], ...mapped }; else next.unshift(mapped); } return next; });
   }
 
+  // AppCtx value is memoised so consumers that only depend on e.g. `t` don't
+  // re-render when unrelated state changes. `t` is the STR bundle (constant),
+  // `prefs` and `setPrefs` round out the values that were previously prop-drilled.
+  const appCtxValue = useMemo(() => ({ t, prefs, setPrefs, showToast }), [t, prefs]);
+
   if (workout) {
     const plan = plans.find((p) => p.id === workout.planId);
     if (!plan) return null;
-    return (<SafeAreaView style={styles.root}><WorkoutScreen t={t} plan={plan} workout={workout} setWorkout={setWorkout} onFinish={finishWorkout} allExercises={allExercises} onOpenExerciseDetail={openExerciseDetail} /></SafeAreaView>);
+    return (
+      <AppCtx.Provider value={appCtxValue}>
+        <SafeAreaView style={styles.root}>
+          <WorkoutScreen plan={plan} workout={workout} setWorkout={setWorkout} onFinish={finishWorkout} allExercises={allExercises} onOpenExerciseDetail={openExerciseDetail} />
+        </SafeAreaView>
+      </AppCtx.Provider>
+    );
   }
 
+  const setNoteDraft = (next) => dispatchUi({ type: "NOTE", note: next });
+  const setTab = (nextTab) => dispatchUi({ type: "TAB", tab: nextTab });
+
   return (
-    <SafeAreaView style={styles.root}>
-      {tab === "today" ? <TodayScreen t={t} note={note} setNote={setNote} logs={logs} addLog={addLog} sessions={sessions} onOpenSession={openSession} todayAgenda={todayAgenda} onDoneAgenda={markAgendaDone} onStartAgendaGym={startAgendaGym} onStartAgendaEndurance={() => {}} onMoveAgendaTomorrow={moveAgendaToTomorrow} onCopyAgendaNextWeek={copyAgendaToNextWeek} onOpenLog={openLog} /> : null}
-      {tab === "plans" ? <PlansScreen t={t} plans={plans} setPlans={setPlans} activePlanId={activePlanId} setActivePlanId={setActivePlanId} onStartWorkout={onStartWorkout} allExercises={allExercises} /> : null}
-      {tab === "library" ? <LibraryScreen t={t} allExercises={allExercises} userExercises={userExercises} onDeleteUserExercise={deleteUserExercise} onOpenCreate={() => setCreateExerciseOpen(true)} onOpenImportExercises={() => setImportExercisesOpen(true)} onOpenExport={() => setExportOpen(true)} onOpenImportData={() => setImportDataOpen(true)} packInstalling={packInstalling} packStatusText={packStatusText} onInstallPack={installFreeExerciseDbPack} prefs={prefs} setPrefs={setPrefs} onOpenExerciseDetail={openExerciseDetail} /> : null}
-      {tab === "progress" ? <ProgressScreen sessions={sessions} logs={logs} calendarEntries={calendarEntries} allExercises={allExercises} prefs={prefs} setPrefs={setPrefs} /> : null}
-      {tab === "endurance" ? <EnduranceScreen templates={enduranceTemplates} sessions={enduranceSessions} plans={plans} onSaveTemplate={(t) => setEnduranceTemplates((prev) => { const i = prev.findIndex((x) => x.id === t.id); if (i >= 0) { const n = [...prev]; n[i] = t; return n; } return [t, ...prev]; })} onDeleteTemplate={(id) => setEnduranceTemplates((prev) => prev.filter((x) => x.id !== id))} onStartTemplate={() => {}} onScheduleTemplate={() => {}} onOpenSession={() => {}} /> : null}
-      {tab === "calendar" ? <CalendarScreen t={t} plans={plans} calendarEntries={calendarEntries} setCalendarEntries={setCalendarEntries} calendarTemplates={calendarTemplates} setCalendarTemplates={setCalendarTemplates} calendarWeekOffset={calendarWeekOffset} setCalendarWeekOffset={setCalendarWeekOffset} onApplyTemplatesToWeek={applyTemplatesToWeek} /> : null}
+    <AppCtx.Provider value={appCtxValue}>
+      <SafeAreaView style={styles.root}>
+        {tab === "today" ? <TodayScreen note={note} setNote={setNoteDraft} logs={logs} addLog={addLog} sessions={sessions} onOpenSession={openSession} todayAgenda={todayAgenda} onDoneAgenda={markAgendaDone} onStartAgendaGym={startAgendaGym} onStartAgendaEndurance={() => {}} onMoveAgendaTomorrow={moveAgendaToTomorrow} onCopyAgendaNextWeek={copyAgendaToNextWeek} onOpenLog={openLog} /> : null}
+        {tab === "plans" ? <PlansScreen plans={plans} setPlans={setPlans} activePlanId={activePlanId} setActivePlanId={setActivePlanId} onStartWorkout={onStartWorkout} allExercises={allExercises} /> : null}
+        {tab === "library" ? <LibraryScreen allExercises={allExercises} userExercises={userExercises} onDeleteUserExercise={deleteUserExercise} onOpenCreate={() => dispatchUi({ type: "OPEN_MODAL", key: "createExerciseOpen" })} onOpenImportExercises={() => dispatchUi({ type: "OPEN_MODAL", key: "importExercisesOpen" })} onOpenExport={() => dispatchUi({ type: "OPEN_MODAL", key: "exportOpen" })} onOpenImportData={() => dispatchUi({ type: "OPEN_MODAL", key: "importDataOpen" })} packInstalling={packInstalling} packStatusText={packStatusText} onInstallPack={installFreeExerciseDbPack} onOpenExerciseDetail={openExerciseDetail} /> : null}
+        {tab === "progress" ? <ProgressScreen sessions={sessions} logs={logs} calendarEntries={calendarEntries} allExercises={allExercises} /> : null}
+        {tab === "endurance" ? <EnduranceScreen templates={enduranceTemplates} sessions={enduranceSessions} plans={plans} onSaveTemplate={(tpl) => setEnduranceTemplates((prev) => { const i = prev.findIndex((x) => x.id === tpl.id); if (i >= 0) { const n = [...prev]; n[i] = tpl; return n; } return [tpl, ...prev]; })} onDeleteTemplate={(id) => setEnduranceTemplates((prev) => prev.filter((x) => x.id !== id))} onStartTemplate={() => {}} onScheduleTemplate={() => {}} onOpenSession={() => {}} /> : null}
+        {tab === "calendar" ? <CalendarScreen plans={plans} calendarEntries={calendarEntries} setCalendarEntries={setCalendarEntries} calendarTemplates={calendarTemplates} setCalendarTemplates={setCalendarTemplates} calendarWeekOffset={calendarWeekOffset} setCalendarWeekOffset={setCalendarWeekOffset} onApplyTemplatesToWeek={applyTemplatesToWeek} /> : null}
 
-      <View style={[styles.tabBar, { bottom: TAB_BOTTOM + 8 }]}>
-        <TabButton label={t.tabs.today} active={tab === "today"} onPress={() => setTab("today")} />
-        <TabButton label={t.tabs.plans} active={tab === "plans"} onPress={() => setTab("plans")} />
-        <TabButton label={t.tabs.library} active={tab === "library"} onPress={() => setTab("library")} />
-        <TabButton label={t.tabs.progress} active={tab === "progress"} onPress={() => setTab("progress")} />
-        <TabButton label={t.tabs.endurance} active={tab === "endurance"} onPress={() => setTab("endurance")} />
-        <TabButton label={t.tabs.calendar} active={tab === "calendar"} onPress={() => setTab("calendar")} />
-      </View>
+        <View style={[styles.tabBar, { bottom: TAB_BOTTOM + 8 }]}>
+          <TabButton label={t.tabs.today} active={tab === "today"} onPress={() => setTab("today")} />
+          <TabButton label={t.tabs.plans} active={tab === "plans"} onPress={() => setTab("plans")} />
+          <TabButton label={t.tabs.library} active={tab === "library"} onPress={() => setTab("library")} />
+          <TabButton label={t.tabs.progress} active={tab === "progress"} onPress={() => setTab("progress")} />
+          <TabButton label={t.tabs.endurance} active={tab === "endurance"} onPress={() => setTab("endurance")} />
+          <TabButton label={t.tabs.calendar} active={tab === "calendar"} onPress={() => setTab("calendar")} />
+        </View>
 
-      <WorkoutDetailModal visible={sessionModalOpen} onClose={() => setSessionModalOpen(false)} t={t} session={selectedSession} onSaveSession={saveSessionEdits} />
-      <EditLogModal visible={editLogOpen} onClose={() => setEditLogOpen(false)} log={selectedLog} onSave={saveLog} onDelete={deleteLog} />
-      <ExerciseDetailModal visible={exerciseDetailOpen} onClose={() => setExerciseDetailOpen(false)} exercise={selectedExercise} prefs={prefs} setPrefs={setPrefs} onSaveExerciseDefaults={() => {}} />
-      <CreateExerciseModal visible={createExerciseOpen} onClose={() => setCreateExerciseOpen(false)} t={t} onSave={addCustomExercise} />
-      <ImportExercisesModal visible={importExercisesOpen} onClose={() => setImportExercisesOpen(false)} t={t} onImport={importExercises} />
-      <ExportDataModal visible={exportOpen} onClose={() => setExportOpen(false)} t={t} data={exportPayload} />
-      <ImportDataModal visible={importDataOpen} onClose={() => setImportDataOpen(false)} t={t} onImport={importAppData} />
-      <ToastBanner toast={toast} />
-      <CelebrationOverlay visible={celebrateDone} />
-    </SafeAreaView>
+        <WorkoutDetailModal visible={ui.sessionModal.open} onClose={() => dispatchUi({ type: "CLOSE_SESSION" })} session={ui.sessionModal.session} onSaveSession={saveSessionEdits} />
+        <EditLogModal visible={ui.editLogModal.open} onClose={() => dispatchUi({ type: "CLOSE_LOG" })} log={ui.editLogModal.log} onSave={saveLog} onDelete={deleteLog} />
+        <ExerciseDetailModal visible={ui.exerciseDetailModal.open} onClose={() => dispatchUi({ type: "CLOSE_EXERCISE_DETAIL" })} exercise={ui.exerciseDetailModal.exercise} onSaveExerciseDefaults={() => {}} />
+        <CreateExerciseModal visible={ui.createExerciseOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "createExerciseOpen" })} onSave={addCustomExercise} />
+        <ImportExercisesModal visible={ui.importExercisesOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "importExercisesOpen" })} onImport={importExercises} />
+        <ExportDataModal visible={ui.exportOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "exportOpen" })} data={exportPayload} />
+        <ImportDataModal visible={ui.importDataOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "importDataOpen" })} onImport={importAppData} />
+        <ToastBanner toast={toast} />
+        <CelebrationOverlay visible={celebrateDone} />
+      </SafeAreaView>
+    </AppCtx.Provider>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#F2F4F8" },
+  root: { flex: 1, backgroundColor: DS.colors.bg },
   screenPad: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 132 },
-  h1: { fontSize: 27, fontWeight: "700", color: "#0B0B0F", marginBottom: 16, letterSpacing: 0.2 },
-  card: { backgroundColor: "rgba(255,255,255,0.92)", borderRadius: 20, paddingHorizontal: 16, paddingVertical: 16, borderWidth: 1, borderColor: "rgba(12,20,38,0.08)", shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, marginBottom: 16 },
-  cardTitle: { fontSize: 15, fontWeight: "700", color: "#0B0B0F", marginBottom: 12, letterSpacing: 0.2 },
+  h1: { fontSize: 27, fontWeight: "700", color: DS.colors.text, marginBottom: 16, letterSpacing: 0.2 },
+  card: { backgroundColor: DS.colors.surface, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 16, borderWidth: 1, borderColor: DS.colors.border, shadowColor: "#000", shadowOpacity: 0.05, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, marginBottom: 16 },
+  cardTitle: { fontSize: 15, fontWeight: "700", color: DS.colors.text, marginBottom: 12, letterSpacing: 0.2 },
   label: { fontSize: 12, fontWeight: "600", color: "#3A3A44", marginBottom: 8, marginTop: 8 },
   smallLabel: { fontSize: 11, fontWeight: "600", color: "#3A3A44", marginBottom: 6 },
-  input: { backgroundColor: "rgba(255,255,255,0.9)", borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", paddingHorizontal: 14, paddingVertical: 13, borderRadius: 16, color: "#0B0B0F" },
+  input: { backgroundColor: "rgba(255,255,255,0.9)", borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", paddingHorizontal: 14, paddingVertical: 13, borderRadius: 16, color: DS.colors.text },
   inputGlowWrap: { backgroundColor: "rgba(255,255,255,0.9)", borderWidth: 1, paddingHorizontal: 14, paddingVertical: 13, borderRadius: 16 },
   glowBlobBlue: { position: "absolute", left: 8, right: 8, top: 4, bottom: 4, backgroundColor: "rgba(68,142,255,0.08)", borderRadius: 16 },
   glowBlobGreen: { position: "absolute", left: 22, right: 22, top: 9, bottom: 9, backgroundColor: "rgba(47,204,141,0.06)", borderRadius: 16 },
-  inputSmall: { backgroundColor: "rgba(255,255,255,0.9)", borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, color: "#0B0B0F" },
-  help: { marginTop: 10, color: "#5C5C66", fontSize: 12, lineHeight: 18 },
-  muted: { color: "#5C5C66", fontSize: 13, lineHeight: 20 },
+  inputSmall: { backgroundColor: "rgba(255,255,255,0.9)", borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, color: DS.colors.text },
+  help: { marginTop: 10, color: DS.colors.muted, fontSize: 12, lineHeight: 18 },
+  muted: { color: DS.colors.muted, fontSize: 13, lineHeight: 20 },
   row: { flexDirection: "row", alignItems: "center", marginTop: 12 },
   rowWrap: { flexDirection: "row", flexWrap: "wrap", marginTop: 12 },
   rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  statBox: { flex: 1, backgroundColor: "rgba(0,0,0,0.03)", borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)" },
-  statLabel: { fontSize: 12, color: "#5C5C66", fontWeight: "600" },
-  statValue: { fontSize: 22, fontWeight: "800", color: "#0B0B0F", marginTop: 4 },
-  statValueSmall: { fontSize: 14, fontWeight: "700", color: "#0B0B0F", marginTop: 4 },
-  timerBig: { fontSize: 28, fontWeight: "800", color: "#0B0B0F" },
+  statBox: { flex: 1, backgroundColor: DS.colors.surfaceSoft, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)" },
+  statLabel: { fontSize: 12, color: DS.colors.muted, fontWeight: "600" },
+  statValue: { fontSize: 22, fontWeight: "800", color: DS.colors.text, marginTop: 4 },
+  statValueSmall: { fontSize: 14, fontWeight: "700", color: DS.colors.text, marginTop: 4 },
+  timerBig: { fontSize: 28, fontWeight: "800", color: DS.colors.text },
   pill: { paddingVertical: 10, paddingHorizontal: 12, borderRadius: 999, marginRight: 10, marginBottom: 10, borderWidth: 1 },
-  pillPrimary: { backgroundColor: "#0B0B0F", borderColor: "#0B0B0F" },
+  pillPrimary: { backgroundColor: DS.colors.text, borderColor: DS.colors.text },
   pillSecondary: { backgroundColor: "rgba(255,255,255,0.9)", borderColor: "rgba(0,0,0,0.12)" },
   pillTextPrimary: { color: "white", fontWeight: "700", fontSize: 13 },
-  pillTextSecondary: { color: "#0B0B0F", fontWeight: "700", fontSize: 13 },
-  listItem: { backgroundColor: "rgba(0,0,0,0.03)", borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)", marginBottom: 12 },
-  listItemRow: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(0,0,0,0.03)", borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)", marginBottom: 12 },
-  listTitle: { color: "#0B0B0F", fontWeight: "800", fontSize: 14 },
-  listMeta: { color: "#5C5C66", marginTop: 4, fontSize: 12, fontWeight: "600" },
-  listBody: { color: "#0B0B0F", marginTop: 8, fontSize: 13, lineHeight: 18 },
-  badge: { color: "#5C5C66", fontSize: 12, fontWeight: "800" },
+  pillTextSecondary: { color: DS.colors.text, fontWeight: "700", fontSize: 13 },
+  listItem: { backgroundColor: DS.colors.surfaceSoft, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)", marginBottom: 12 },
+  listItemRow: { flexDirection: "row", alignItems: "center", backgroundColor: DS.colors.surfaceSoft, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)", marginBottom: 12 },
+  listTitle: { color: DS.colors.text, fontWeight: "800", fontSize: 14 },
+  listMeta: { color: DS.colors.muted, marginTop: 4, fontSize: 12, fontWeight: "600" },
+  listBody: { color: DS.colors.text, marginTop: 8, fontSize: 13, lineHeight: 18 },
+  badge: { color: DS.colors.muted, fontSize: 12, fontWeight: "800" },
   incompleteBadge: { marginTop: 6, color: "#9A2C2C", fontWeight: "900", fontSize: 12 },
-  accordionBtn: { backgroundColor: "rgba(0,0,0,0.03)", borderRadius: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.06)", paddingVertical: 10, paddingHorizontal: 12 },
+  accordionBtn: { backgroundColor: DS.colors.surfaceSoft, borderRadius: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.06)", paddingVertical: 10, paddingHorizontal: 12 },
   chip: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 999, marginRight: 10, marginBottom: 10, backgroundColor: "rgba(255,255,255,0.9)", borderWidth: 1, borderColor: "rgba(0,0,0,0.12)" },
-  chipActive: { backgroundColor: "#0B0B0F", borderColor: "#0B0B0F" },
-  chipText: { color: "#0B0B0F", fontWeight: "700", fontSize: 12 },
+  chipActive: { backgroundColor: DS.colors.text, borderColor: DS.colors.text },
+  chipText: { color: DS.colors.text, fontWeight: "700", fontSize: 12 },
   chipTextActive: { color: "white", fontWeight: "800", fontSize: 12 },
   progressDayChip: { width: 68, borderRadius: 14, padding: 10, marginRight: 8, alignItems: "center", borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", backgroundColor: "rgba(255,255,255,0.9)" },
   progressDayChipActive: { borderColor: "rgba(68,142,255,0.42)", backgroundColor: "rgba(68,142,255,0.08)" },
@@ -1586,37 +1726,37 @@ const styles = StyleSheet.create({
   progressDone: { backgroundColor: "#2ECC8D" },
   progressPlanned: { backgroundColor: "#448EFF" },
   progressNone: { backgroundColor: "rgba(0,0,0,0.2)" },
-  statMini: { minWidth: 110, backgroundColor: "rgba(0,0,0,0.03)", borderRadius: 14, padding: 10, marginRight: 8, marginBottom: 8, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)" },
+  statMini: { minWidth: 110, backgroundColor: DS.colors.surfaceSoft, borderRadius: 14, padding: 10, marginRight: 8, marginBottom: 8, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)" },
   trendRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", height: 120, marginTop: 8 },
   trendBarWrap: { width: 28, alignItems: "center", justifyContent: "flex-end" },
   trendBar: { width: 18, borderRadius: 8, backgroundColor: "rgba(68,142,255,0.6)" },
-  trendLabel: { marginTop: 6, fontSize: 11, color: "#5C5C66", fontWeight: "700" },
-  planItem: { backgroundColor: "rgba(0,0,0,0.03)", borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)", marginBottom: 14 },
+  trendLabel: { marginTop: 6, fontSize: 11, color: DS.colors.muted, fontWeight: "700" },
+  planItem: { backgroundColor: DS.colors.surfaceSoft, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: "rgba(0,0,0,0.05)", marginBottom: 14 },
   setRow: { flexDirection: "row", marginTop: 10 },
   workoutSetRow: { flexDirection: "row", alignItems: "flex-end", marginTop: 10 },
   doneBtn: { height: 42, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, alignItems: "center", justifyContent: "center" },
-  doneBtnOn: { backgroundColor: "#0B0B0F", borderColor: "#0B0B0F" },
+  doneBtnOn: { backgroundColor: DS.colors.text, borderColor: DS.colors.text },
   doneBtnOff: { backgroundColor: "rgba(255,255,255,0.9)", borderColor: "rgba(0,0,0,0.12)" },
   doneTextOn: { color: "white", fontWeight: "900", fontSize: 12 },
-  doneTextOff: { color: "#0B0B0F", fontWeight: "900", fontSize: 12 },
+  doneTextOff: { color: DS.colors.text, fontWeight: "900", fontSize: 12 },
   tabBar: { position: "absolute", left: 12, right: 12, flexDirection: "row", backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 24, borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", minHeight: 68, paddingVertical: 12, paddingHorizontal: 8, shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
   tabBtn: { flex: 1, minHeight: 52, borderRadius: 16, alignItems: "center", justifyContent: "center", marginHorizontal: 2, paddingHorizontal: 6 },
   tabBtnActive: { backgroundColor: "rgba(0,0,0,0.06)" },
-  tabText: { color: "#5C5C66", fontWeight: "700", fontSize: 12 },
-  tabTextActive: { color: "#0B0B0F", fontWeight: "900", fontSize: 12 },
-  modalRoot: { flex: 1, backgroundColor: "#F2F4F8" },
+  tabText: { color: DS.colors.muted, fontWeight: "700", fontSize: 12 },
+  tabTextActive: { color: DS.colors.text, fontWeight: "900", fontSize: 12 },
+  modalRoot: { flex: 1, backgroundColor: DS.colors.bg },
   modalHeader: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  modalTitle: { fontSize: 18, fontWeight: "900", color: "#0B0B0F" },
+  modalTitle: { fontSize: 18, fontWeight: "900", color: DS.colors.text },
   detailSetRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, paddingHorizontal: 12, borderRadius: 14, borderWidth: 1, borderColor: "rgba(0,0,0,0.08)", backgroundColor: "rgba(255,255,255,0.9)", marginBottom: 10 },
   detailSetDone: { backgroundColor: "rgba(11,11,15,0.92)", borderColor: "rgba(11,11,15,0.92)" },
-  detailSetText: { color: "#0B0B0F", fontWeight: "800", fontSize: 12 },
+  detailSetText: { color: DS.colors.text, fontWeight: "800", fontSize: 12 },
   detailSetTextDone: { color: "white", fontWeight: "900", fontSize: 12 },
-  detailBadge: { color: "#5C5C66", fontSize: 12, fontWeight: "800" },
+  detailBadge: { color: DS.colors.muted, fontSize: 12, fontWeight: "800" },
   detailBadgeDone: { color: "white", fontSize: 12, fontWeight: "900" },
   toastWrap: { position: "absolute", top: 48, left: 16, right: 16, backgroundColor: "rgba(11,11,15,0.92)", borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, zIndex: 40 },
   toastError: { backgroundColor: "rgba(120,20,20,0.92)" },
   toastSuccess: { backgroundColor: "rgba(20,90,40,0.92)" },
   toastText: { color: "white", fontWeight: "700", fontSize: 13 },
   celebrationOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(11,11,15,0.12)", zIndex: 35 },
-  celebrationCard: { backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 22, paddingHorizontal: 22, paddingVertical: 18, borderWidth: 1, borderColor: "rgba(12,20,38,0.08)", alignItems: "center" },
+  celebrationCard: { backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 22, paddingHorizontal: 22, paddingVertical: 18, borderWidth: 1, borderColor: DS.colors.border, alignItems: "center" },
 });
