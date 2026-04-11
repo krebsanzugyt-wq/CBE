@@ -1071,13 +1071,16 @@ function WorkoutScreen({ t, plan, workout, setWorkout, onFinish, allExercises, o
   const [exerciseNoteModal, setExerciseNoteModal] = useState({ open: false, itemId: null });
   const [setNoteModal, setSetNoteModal] = useState({ open: false, itemId: null, setIdx: -1 });
 
+  // NB: setWorkout stammt aus useState im Parent und ist garantiert stabil.
+  // Absichtlich NICHT in der Dep-Liste, damit der Interval nicht bei jedem Parent-Re-Render neu startet.
   useEffect(() => {
     if (!workout.restRunning) return;
     restIntervalRef.current = setInterval(() => {
       setWorkout((prev) => { if (!prev) return prev; const next = prev.restRemaining <= 1 ? 0 : prev.restRemaining - 1; const stop = next === 0; return { ...prev, restRemaining: next, restRunning: stop ? false : true }; });
     }, 1000);
     return () => { if (restIntervalRef.current) clearInterval(restIntervalRef.current); restIntervalRef.current = null; };
-  }, [workout.restRunning, setWorkout]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workout.restRunning]);
 
   const items = useMemo(() => plan.items.map((it) => ({ ...it, exercise: allExercises.find((e) => e.id === it.exerciseId) || { name: "Exercise", category: "", muscle: "", source: "unknown" } })), [plan, allExercises]);
   const totals = useMemo(() => { let totalSets = 0; let doneSets = 0; items.forEach((it) => { const sets = workout.sets[it.id] || []; totalSets += sets.length; doneSets += sets.filter((s) => s.done).length; }); return { totalSets, doneSets }; }, [items, workout]);
