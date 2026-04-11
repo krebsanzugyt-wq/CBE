@@ -1429,6 +1429,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Monolithischer Save-Effekt: Alle persistenten Slices landen in einem einzigen
+  // AsyncStorage-Blob unter STORAGE_KEY. Die grosse Dep-Liste ist Absicht – so wird
+  // jede Änderung an beliebigen Slices zu einem konsolidierten Schreibvorgang,
+  // wodurch partielle Writes / inkonsistente Schemas vermieden werden.
+  // Der 400ms Debounce verhindert Thrash bei vielen schnellen Updates
+  // (z.B. während des Tippens im Plan-Editor).
   const saveTimerRef = useRef(null);
   useEffect(() => {
     if (!hydrated) return;
