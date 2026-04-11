@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   SafeAreaView,
   View,
@@ -1379,11 +1379,63 @@ function EnduranceScreen({ templates, sessions, plans, onSaveTemplate, onDeleteT
   );
 }
 
+// Consolidates the ~17 UI-only useState hooks that used to live at the top of
+// <App/>. Every modal flag, "selected item" cursor, transient banner
+// (toast/celebrate), note draft, tab, hydration flag, and pack-install progress
+// lives here. State that is persisted to AsyncStorage or prop-drilled to
+// children as a setter (plans/logs/sessions/workout/...) deliberately stays in
+// plain useState so we don't have to route every child setter through dispatch.
+const INITIAL_UI = {
+  hydrated: false,
+  tab: "today",
+  note: "",
+  toast: { text: "", type: "info" },
+  celebrateDone: false,
+  packInstalling: false,
+  packStatusText: "",
+  sessionModal: { open: false, session: null },
+  editLogModal: { open: false, log: null },
+  exerciseDetailModal: { open: false, exercise: null },
+  createExerciseOpen: false,
+  importExercisesOpen: false,
+  exportOpen: false,
+  importDataOpen: false,
+};
+
+function uiReducer(state, action) {
+  switch (action.type) {
+    case "HYDRATED": return { ...state, hydrated: true };
+    case "TAB": return { ...state, tab: action.tab };
+    case "NOTE": return { ...state, note: action.note };
+    case "TOAST": return { ...state, toast: action.toast };
+    case "CELEBRATE": return { ...state, celebrateDone: action.value };
+    case "PACK": {
+      const next = { ...state };
+      if (action.installing !== undefined) next.packInstalling = action.installing;
+      if (action.text !== undefined) next.packStatusText = action.text;
+      return next;
+    }
+    case "OPEN_SESSION": return { ...state, sessionModal: { open: true, session: action.session } };
+    case "CLOSE_SESSION": return { ...state, sessionModal: { ...state.sessionModal, open: false } };
+    case "UPDATE_SELECTED_SESSION": {
+      const current = state.sessionModal.session;
+      const next = typeof action.next === "function" ? action.next(current) : action.next;
+      return { ...state, sessionModal: { ...state.sessionModal, session: next } };
+    }
+    case "OPEN_LOG": return { ...state, editLogModal: { open: true, log: action.log } };
+    case "CLOSE_LOG": return { ...state, editLogModal: { ...state.editLogModal, open: false } };
+    case "OPEN_EXERCISE_DETAIL": return { ...state, exerciseDetailModal: { open: true, exercise: action.exercise } };
+    case "CLOSE_EXERCISE_DETAIL": return { ...state, exerciseDetailModal: { ...state.exerciseDetailModal, open: false } };
+    case "OPEN_MODAL": return { ...state, [action.key]: true };
+    case "CLOSE_MODAL": return { ...state, [action.key]: false };
+    default: return state;
+  }
+}
+
 export default function App() {
   const t = STR[LANG];
-  const [hydrated, setHydrated] = useState(false);
-  const [tab, setTab] = useState("today");
-  const [note, setNote] = useState("");
+  const [ui, dispatchUi] = useReducer(uiReducer, INITIAL_UI);
+  const { hydrated, tab, note, toast, celebrateDone, packInstalling, packStatusText } = ui;
   const [logs, setLogs] = useState([]);
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
   const [userExercises, setUserExercises] = useState([]);
@@ -1397,34 +1449,19 @@ export default function App() {
   const [workout, setWorkout] = useState(null);
   const [enduranceTemplates, setEnduranceTemplates] = useState([]);
   const [enduranceSessions, setEnduranceSessions] = useState([]);
-  const [enduranceWorkout, setEnduranceWorkout] = useState(null);
-  const [sessionModalOpen, setSessionModalOpen] = useState(false);
-  const [selectedSession, setSelectedSession] = useState(null);
-  const [editLogOpen, setEditLogOpen] = useState(false);
-  const [selectedLog, setSelectedLog] = useState(null);
-  const [exerciseDetailOpen, setExerciseDetailOpen] = useState(false);
-  const [selectedExercise, setSelectedExercise] = useState(null);
-  const [createExerciseOpen, setCreateExerciseOpen] = useState(false);
-  const [importExercisesOpen, setImportExercisesOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [importDataOpen, setImportDataOpen] = useState(false);
-  const [packInstalling, setPackInstalling] = useState(false);
-  const [packStatusText, setPackStatusText] = useState("");
-  const [toast, setToast] = useState({ text: "", type: "info" });
-  const [celebrateDone, setCelebrateDone] = useState(false);
   const TAB_BOTTOM = Platform.OS === "ios" ? 34 : 14;
 
   function addLog(type, overrideNote) {
     setLogs((prev) => [{ id: uid(), type, note: (overrideNote ?? note).trim() ? (overrideNote ?? note).trim() : undefined, createdAt: Date.now() }, ...prev]);
-    setNote("");
+    dispatchUi({ type: "NOTE", note: "" });
   }
 
   const toastTimerRef = useRef(null);
   function showToast(text, type = "info") {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast({ text, type });
+    dispatchUi({ type: "TOAST", toast: { text, type } });
     toastTimerRef.current = setTimeout(() => {
-      setToast({ text: "", type: "info" });
+      dispatchUi({ type: "TOAST", toast: { text: "", type: "info" } });
       toastTimerRef.current = null;
     }, 1800);
   }
@@ -1442,9 +1479,9 @@ export default function App() {
       let hadError = false;
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (!raw) { if (isMountedRef.current) setHydrated(true); return; }
+        if (!raw) { if (isMountedRef.current) dispatchUi({ type: "HYDRATED" }); return; }
         const parsed = JSON.parse(raw);
-        if (!parsed || (parsed.v !== 3 && parsed.v !== 4 && parsed.v !== 5)) { if (isMountedRef.current) setHydrated(true); return; }
+        if (!parsed || (parsed.v !== 3 && parsed.v !== 4 && parsed.v !== 5)) { if (isMountedRef.current) dispatchUi({ type: "HYDRATED" }); return; }
         if (!isMountedRef.current) return;
         if (Array.isArray(parsed.logs)) setLogs(parsed.logs);
         if (Array.isArray(parsed.plans)) setPlans(parsed.plans);
@@ -1459,7 +1496,7 @@ export default function App() {
         hadError = true;
         console.error("[CBE] hydration failed", e);
       } finally {
-        if (isMountedRef.current) setHydrated(true);
+        if (isMountedRef.current) dispatchUi({ type: "HYDRATED" });
         if (hadError && isMountedRef.current) {
           showToast("Gespeicherte Daten konnten nicht geladen werden", "error");
         }
@@ -1504,16 +1541,16 @@ export default function App() {
 
   async function installFreeExerciseDbPack() {
     try {
-      setPackInstalling(true); setPackStatusText("Downloading…");
+      dispatchUi({ type: "PACK", installing: true, text: "Downloading…" });
       const res = await fetch(FREE_EXERCISE_DB_URL);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setPackStatusText("Parsing…");
+      dispatchUi({ type: "PACK", text: "Parsing…" });
       const arr = await res.json();
       if (!Array.isArray(arr)) throw new Error("Not an array.");
       const mapped = arr.map((raw) => ({ id: `fedb_${String(raw?.id || raw?.name || uid())}`, name: String(raw?.name || "").trim() || "Exercise", category: mapEquipmentToCategory(raw?.equipment), muscle: mapPrimaryMuscleToGroup(raw?.primaryMuscles), source: "pack:free-exercise-db", meta: { equipment: raw?.equipment ?? "", primaryMuscles: raw?.primaryMuscles ?? [] } }));
       const result = importExercises(mapped);
-      setPackStatusText(`Done. Added ${result.added} • Skipped ${result.skipped}`);
-    } catch (e) { setPackStatusText(`Error: ${String(e?.message || e)}`); } finally { setPackInstalling(false); }
+      dispatchUi({ type: "PACK", text: `Done. Added ${result.added} • Skipped ${result.skipped}` });
+    } catch (e) { dispatchUi({ type: "PACK", text: `Error: ${String(e?.message || e)}` }); } finally { dispatchUi({ type: "PACK", installing: false }); }
   }
 
   const exportPayload = useMemo(() => ({ v: 5, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs }), [logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs]);
@@ -1529,7 +1566,8 @@ export default function App() {
     setEnduranceSessions(Array.isArray(obj.enduranceSessions) ? obj.enduranceSessions : []);
     setUserExercises(Array.isArray(obj.userExercises) ? obj.userExercises : []);
     setPrefs(normalizePrefs(obj.prefs));
-    setTab("today"); setActivePlanId(null);
+    dispatchUi({ type: "TAB", tab: "today" });
+    setActivePlanId(null);
     return { ok: true };
   }
 
@@ -1561,15 +1599,21 @@ export default function App() {
     const session = { id: uid(), type: "Gym", planId: plan.id, planName: plan.name, startedAt: workout.startedAt, endedAt, durationMin: minutesBetween(workout.startedAt, endedAt), totalSets, doneSets, totalVolumeKg: Number(totalVolumeKg.toFixed(1)), totalReps, status: isSessionComplete(items) ? "complete" : "incomplete", items };
     setSessions((prev) => [session, ...prev]);
     addLog("Gym", `Workout: ${plan.name}\nSets: ${doneSets}/${totalSets}`);
-    setWorkout(null); setCelebrateDone(true); setTimeout(() => setCelebrateDone(false), 800);
+    setWorkout(null);
+    dispatchUi({ type: "CELEBRATE", value: true });
+    setTimeout(() => dispatchUi({ type: "CELEBRATE", value: false }), 800);
   }
 
-  function openSession(session) { setSelectedSession(session); setSessionModalOpen(true); }
-  function openLog(log) { setSelectedLog(log); setEditLogOpen(true); }
-  function saveLog(nextLog) { setLogs((prev) => prev.map((l) => (l.id === nextLog.id ? { ...l, ...nextLog } : l))); setEditLogOpen(false); }
-  function deleteLog(logId) { setLogs((prev) => prev.filter((l) => l.id !== logId)); setEditLogOpen(false); }
-  function openExerciseDetail(exercise) { setSelectedExercise(exercise); setExerciseDetailOpen(true); }
-  function saveSessionEdits(updatedSession) { const normalized = normalizeGymSession(updatedSession); setSessions((prev) => prev.map((s) => (s.id === normalized.id ? normalized : s))); setSelectedSession((prev) => (prev?.id === normalized.id ? normalized : prev)); }
+  function openSession(session) { dispatchUi({ type: "OPEN_SESSION", session }); }
+  function openLog(log) { dispatchUi({ type: "OPEN_LOG", log }); }
+  function saveLog(nextLog) { setLogs((prev) => prev.map((l) => (l.id === nextLog.id ? { ...l, ...nextLog } : l))); dispatchUi({ type: "CLOSE_LOG" }); }
+  function deleteLog(logId) { setLogs((prev) => prev.filter((l) => l.id !== logId)); dispatchUi({ type: "CLOSE_LOG" }); }
+  function openExerciseDetail(exercise) { dispatchUi({ type: "OPEN_EXERCISE_DETAIL", exercise }); }
+  function saveSessionEdits(updatedSession) {
+    const normalized = normalizeGymSession(updatedSession);
+    setSessions((prev) => prev.map((s) => (s.id === normalized.id ? normalized : s)));
+    dispatchUi({ type: "UPDATE_SELECTED_SESSION", next: (prev) => (prev?.id === normalized.id ? normalized : prev) });
+  }
 
   const todayKey = formatDateKey(new Date());
   const todayAgenda = useMemo(() => calendarEntries.filter((e) => e.date === todayKey).sort((a, b) => parseTimeToMin(a.startTime) - parseTimeToMin(b.startTime)), [calendarEntries, todayKey]);
@@ -1600,12 +1644,15 @@ export default function App() {
     );
   }
 
+  const setNoteDraft = (next) => dispatchUi({ type: "NOTE", note: next });
+  const setTab = (nextTab) => dispatchUi({ type: "TAB", tab: nextTab });
+
   return (
     <AppCtx.Provider value={appCtxValue}>
       <SafeAreaView style={styles.root}>
-        {tab === "today" ? <TodayScreen note={note} setNote={setNote} logs={logs} addLog={addLog} sessions={sessions} onOpenSession={openSession} todayAgenda={todayAgenda} onDoneAgenda={markAgendaDone} onStartAgendaGym={startAgendaGym} onStartAgendaEndurance={() => {}} onMoveAgendaTomorrow={moveAgendaToTomorrow} onCopyAgendaNextWeek={copyAgendaToNextWeek} onOpenLog={openLog} /> : null}
+        {tab === "today" ? <TodayScreen note={note} setNote={setNoteDraft} logs={logs} addLog={addLog} sessions={sessions} onOpenSession={openSession} todayAgenda={todayAgenda} onDoneAgenda={markAgendaDone} onStartAgendaGym={startAgendaGym} onStartAgendaEndurance={() => {}} onMoveAgendaTomorrow={moveAgendaToTomorrow} onCopyAgendaNextWeek={copyAgendaToNextWeek} onOpenLog={openLog} /> : null}
         {tab === "plans" ? <PlansScreen plans={plans} setPlans={setPlans} activePlanId={activePlanId} setActivePlanId={setActivePlanId} onStartWorkout={onStartWorkout} allExercises={allExercises} /> : null}
-        {tab === "library" ? <LibraryScreen allExercises={allExercises} userExercises={userExercises} onDeleteUserExercise={deleteUserExercise} onOpenCreate={() => setCreateExerciseOpen(true)} onOpenImportExercises={() => setImportExercisesOpen(true)} onOpenExport={() => setExportOpen(true)} onOpenImportData={() => setImportDataOpen(true)} packInstalling={packInstalling} packStatusText={packStatusText} onInstallPack={installFreeExerciseDbPack} onOpenExerciseDetail={openExerciseDetail} /> : null}
+        {tab === "library" ? <LibraryScreen allExercises={allExercises} userExercises={userExercises} onDeleteUserExercise={deleteUserExercise} onOpenCreate={() => dispatchUi({ type: "OPEN_MODAL", key: "createExerciseOpen" })} onOpenImportExercises={() => dispatchUi({ type: "OPEN_MODAL", key: "importExercisesOpen" })} onOpenExport={() => dispatchUi({ type: "OPEN_MODAL", key: "exportOpen" })} onOpenImportData={() => dispatchUi({ type: "OPEN_MODAL", key: "importDataOpen" })} packInstalling={packInstalling} packStatusText={packStatusText} onInstallPack={installFreeExerciseDbPack} onOpenExerciseDetail={openExerciseDetail} /> : null}
         {tab === "progress" ? <ProgressScreen sessions={sessions} logs={logs} calendarEntries={calendarEntries} allExercises={allExercises} /> : null}
         {tab === "endurance" ? <EnduranceScreen templates={enduranceTemplates} sessions={enduranceSessions} plans={plans} onSaveTemplate={(tpl) => setEnduranceTemplates((prev) => { const i = prev.findIndex((x) => x.id === tpl.id); if (i >= 0) { const n = [...prev]; n[i] = tpl; return n; } return [tpl, ...prev]; })} onDeleteTemplate={(id) => setEnduranceTemplates((prev) => prev.filter((x) => x.id !== id))} onStartTemplate={() => {}} onScheduleTemplate={() => {}} onOpenSession={() => {}} /> : null}
         {tab === "calendar" ? <CalendarScreen plans={plans} calendarEntries={calendarEntries} setCalendarEntries={setCalendarEntries} calendarTemplates={calendarTemplates} setCalendarTemplates={setCalendarTemplates} calendarWeekOffset={calendarWeekOffset} setCalendarWeekOffset={setCalendarWeekOffset} onApplyTemplatesToWeek={applyTemplatesToWeek} /> : null}
@@ -1619,13 +1666,13 @@ export default function App() {
           <TabButton label={t.tabs.calendar} active={tab === "calendar"} onPress={() => setTab("calendar")} />
         </View>
 
-        <WorkoutDetailModal visible={sessionModalOpen} onClose={() => setSessionModalOpen(false)} session={selectedSession} onSaveSession={saveSessionEdits} />
-        <EditLogModal visible={editLogOpen} onClose={() => setEditLogOpen(false)} log={selectedLog} onSave={saveLog} onDelete={deleteLog} />
-        <ExerciseDetailModal visible={exerciseDetailOpen} onClose={() => setExerciseDetailOpen(false)} exercise={selectedExercise} onSaveExerciseDefaults={() => {}} />
-        <CreateExerciseModal visible={createExerciseOpen} onClose={() => setCreateExerciseOpen(false)} onSave={addCustomExercise} />
-        <ImportExercisesModal visible={importExercisesOpen} onClose={() => setImportExercisesOpen(false)} onImport={importExercises} />
-        <ExportDataModal visible={exportOpen} onClose={() => setExportOpen(false)} data={exportPayload} />
-        <ImportDataModal visible={importDataOpen} onClose={() => setImportDataOpen(false)} onImport={importAppData} />
+        <WorkoutDetailModal visible={ui.sessionModal.open} onClose={() => dispatchUi({ type: "CLOSE_SESSION" })} session={ui.sessionModal.session} onSaveSession={saveSessionEdits} />
+        <EditLogModal visible={ui.editLogModal.open} onClose={() => dispatchUi({ type: "CLOSE_LOG" })} log={ui.editLogModal.log} onSave={saveLog} onDelete={deleteLog} />
+        <ExerciseDetailModal visible={ui.exerciseDetailModal.open} onClose={() => dispatchUi({ type: "CLOSE_EXERCISE_DETAIL" })} exercise={ui.exerciseDetailModal.exercise} onSaveExerciseDefaults={() => {}} />
+        <CreateExerciseModal visible={ui.createExerciseOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "createExerciseOpen" })} onSave={addCustomExercise} />
+        <ImportExercisesModal visible={ui.importExercisesOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "importExercisesOpen" })} onImport={importExercises} />
+        <ExportDataModal visible={ui.exportOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "exportOpen" })} data={exportPayload} />
+        <ImportDataModal visible={ui.importDataOpen} onClose={() => dispatchUi({ type: "CLOSE_MODAL", key: "importDataOpen" })} onImport={importAppData} />
         <ToastBanner toast={toast} />
         <CelebrationOverlay visible={celebrateDone} />
       </SafeAreaView>
