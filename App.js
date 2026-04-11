@@ -437,6 +437,21 @@ function smartSearch(exercises, query, cat, mus, limit = 80) {
   return filtered.slice(0, limit).map((x) => x.ex);
 }
 
+// Shared filter state for the exercise-search UI: debounces the query
+// and re-runs smartSearch via useMemo. Used by LibraryPickerList and
+// LibraryScreen (different result limits).
+function useExerciseFilter(allExercises, limit = 80) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("All");
+  const [mus, setMus] = useState("All");
+  const debouncedQ = useDebouncedValue(q, 250);
+  const results = useMemo(
+    () => smartSearch(allExercises, debouncedQ, cat, mus, limit),
+    [allExercises, debouncedQ, cat, mus, limit]
+  );
+  return { q, setQ, cat, setCat, mus, setMus, results };
+}
+
 function toNum(v) {
   const n = parseFloat(String(v ?? "").replace(",", "."));
   return Number.isFinite(n) ? n : 0;
@@ -955,11 +970,7 @@ function TodayScreen({ t, note, setNote, logs, addLog, sessions, onOpenSession, 
 }
 
 function LibraryPickerList({ t, allExercises, onPick }) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("All");
-  const [mus, setMus] = useState("All");
-  const debouncedQ = useDebouncedValue(q, 250);
-  const filtered = useMemo(() => smartSearch(allExercises, debouncedQ, cat, mus, 120), [allExercises, debouncedQ, cat, mus]);
+  const { q, setQ, cat, setCat, mus, setMus, results: filtered } = useExerciseFilter(allExercises, 120);
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <GlassCard title={t.library.search}>
@@ -1162,11 +1173,7 @@ function WorkoutScreen({ t, plan, workout, setWorkout, onFinish, allExercises, o
 }
 
 function LibraryScreen({ t, allExercises, userExercises, onDeleteUserExercise, onOpenCreate, onOpenImportExercises, onOpenExport, onOpenImportData, packInstalling, packStatusText, onInstallPack, prefs, setPrefs, onOpenExerciseDetail }) {
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("All");
-  const [mus, setMus] = useState("All");
-  const debouncedQ = useDebouncedValue(q, 250);
-  const filtered = useMemo(() => smartSearch(allExercises, debouncedQ, cat, mus, 60), [allExercises, debouncedQ, cat, mus]);
+  const { q, setQ, cat, setCat, mus, setMus, results: filtered } = useExerciseFilter(allExercises, 60);
   return (
     <ScrollView contentContainerStyle={styles.screenPad} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <Text style={styles.h1}>{t.library.title}</Text>
