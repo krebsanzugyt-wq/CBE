@@ -1383,7 +1383,18 @@ export default function App() {
     setNote("");
   }
 
-  function showToast(text, type = "info") { setToast({ text, type }); setTimeout(() => setToast({ text: "", type: "info" }), 1800); }
+  const toastTimerRef = useRef(null);
+  function showToast(text, type = "info") {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ text, type });
+    toastTimerRef.current = setTimeout(() => {
+      setToast({ text: "", type: "info" });
+      toastTimerRef.current = null;
+    }, 1800);
+  }
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
 
   useEffect(() => {
     (async () => {
