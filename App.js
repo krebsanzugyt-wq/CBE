@@ -1396,13 +1396,20 @@ export default function App() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
+
+  const saveErrorNotifiedRef = useRef(false);
+
   useEffect(() => {
     (async () => {
+      let hadError = false;
       try {
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (!raw) { setHydrated(true); return; }
+        if (!raw) { if (isMountedRef.current) setHydrated(true); return; }
         const parsed = JSON.parse(raw);
-        if (!parsed || (parsed.v !== 3 && parsed.v !== 4 && parsed.v !== 5)) { setHydrated(true); return; }
+        if (!parsed || (parsed.v !== 3 && parsed.v !== 4 && parsed.v !== 5)) { if (isMountedRef.current) setHydrated(true); return; }
+        if (!isMountedRef.current) return;
         if (Array.isArray(parsed.logs)) setLogs(parsed.logs);
         if (Array.isArray(parsed.plans)) setPlans(parsed.plans);
         if (Array.isArray(parsed.sessions)) setSessions(parsed.sessions.map(normalizeGymSession));
@@ -1412,8 +1419,17 @@ export default function App() {
         if (Array.isArray(parsed.enduranceSessions)) setEnduranceSessions(parsed.enduranceSessions);
         if (parsed.prefs) setPrefs(normalizePrefs(parsed.prefs));
         if (Array.isArray(parsed.userExercises)) setUserExercises(parsed.userExercises);
-      } catch (e) { } finally { setHydrated(true); }
+      } catch (e) {
+        hadError = true;
+        console.error("[CBE] hydration failed", e);
+      } finally {
+        if (isMountedRef.current) setHydrated(true);
+        if (hadError && isMountedRef.current) {
+          showToast("Gespeicherte Daten konnten nicht geladen werden", "error");
+        }
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveTimerRef = useRef(null);
@@ -1421,7 +1437,15 @@ export default function App() {
     if (!hydrated) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
-      try { await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 5, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs })); } catch (e) { }
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ v: 5, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs }));
+      } catch (e) {
+        console.error("[CBE] save failed", e);
+        if (!saveErrorNotifiedRef.current && isMountedRef.current) {
+          saveErrorNotifiedRef.current = true;
+          showToast("Speichern fehlgeschlagen", "error");
+        }
+      }
     }, 400);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [hydrated, logs, plans, sessions, calendarEntries, calendarTemplates, enduranceTemplates, enduranceSessions, userExercises, prefs]);
