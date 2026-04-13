@@ -41,7 +41,7 @@ export const STR = {
       skip: "Skip",
       resume: "Weiter",
       pause: "Pause",
-      doneHint: "Trage kg/reps ein. Tippe dann auf „Done" → Pause startet automatisch.",
+      doneHint: "Trage kg/reps ein. Tippe dann auf 'Done' - Pause startet automatisch.",
       kg: "kg",
       reps: "reps",
       done: "Done",
@@ -55,7 +55,7 @@ export const STR = {
     },
     library: {
       title: "Übungsbibliothek",
-      search: "Suchen (englischer Name)…",
+      search: "Suchen (englischer Name)...",
       filters: { category: "Kategorie", muscle: "Muskel" },
       addToPlan: "Zum Plan",
       close: "Schließen",
@@ -82,7 +82,7 @@ export const STR = {
       empty: "Noch keine geplanten Einträge.",
     },
     common: {
-      pasteHere: "Hier JSON einfügen…",
+      pasteHere: "Hier JSON einfügen...",
       error: "Fehler",
       success: "Erfolg",
     },
