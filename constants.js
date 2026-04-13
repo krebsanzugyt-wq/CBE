@@ -1,5 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
-
 /** =========================
  * i18n (DE UI, Exercise Names EN)
  * ========================= */
@@ -125,10 +123,6 @@ export const CATEGORIES = ["All", "Machine", "Barbell", "Dumbbell", "Cable", "Bo
 export const MUSCLES = ["All", "Chest", "Back", "Legs", "Shoulders", "Arms", "Core", "Full Body", "Other"];
 
 export const STORAGE_KEY = "gymapp_state_v3";
-
-export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-export const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 export const SPORT_TYPES = ["Gym", "Run", "Bike", "Swim", "Other"];
 
