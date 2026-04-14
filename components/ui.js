@@ -40,8 +40,17 @@ export function Chip({ label, active, onPress }) {
 
 export function TabButton({ label, active, onPress }) {
   return (
-    <Pressable onPress={onPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={({ pressed }) => [styles.tabBtn, active ? styles.tabBtnActive : null, pressed ? { opacity: 0.75 } : null]}>
-      <Text style={active ? styles.tabTextActive : styles.tabText}>{label}</Text>
+    <Pressable onPress={onPress} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }} style={({ pressed }) => [styles.tabBtn, active ? styles.tabBtnActive : styles.tabBtnInactive, pressed ? { opacity: 0.75 } : null]}>
+      <Text
+        numberOfLines={1}
+        allowFontScaling={false}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+        ellipsizeMode="clip"
+        style={active ? styles.tabTextActive : styles.tabText}
+      >
+        {label}
+      </Text>
     </Pressable>
   );
 }
